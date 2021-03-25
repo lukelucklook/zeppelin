@@ -99,7 +99,9 @@ public class LoginRestApi {
       }
       if (response == null) {
         Map<String, String> data = new HashMap<>();
-        data.put("redirectURL", constructKnoxUrl(knoxJwtRealm, knoxJwtRealm.getLogin()));
+        data.put("redirectURL",
+            constructUrl(knoxJwtRealm.getProviderUrl(), knoxJwtRealm.getRedirectParam(),
+                knoxJwtRealm.getLogin()));
         response = new JsonResponse<>(Status.OK, "", data);
       }
       return response.build();
@@ -149,11 +151,7 @@ public class LoginRestApi {
     Collection<Realm> realmsList = authenticationService.getRealmsList();
     if (realmsList != null) {
       for (Realm realm : realmsList) {
-        String name = realm.getClass().getName();
-
-        LOG.debug("RealmClass.getName: {}", name);
-
-        if (name.equals("org.apache.zeppelin.realm.jwt.KnoxJwtRealm")) {
+        if (realm instanceof KnoxJwtRealm) {
           return (KnoxJwtRealm) realm;
         }
       }
@@ -165,9 +163,19 @@ public class LoginRestApi {
     Collection<Realm> realmsList = authenticationService.getRealmsList();
     if (realmsList != null) {
       for (Realm realm : realmsList) {
-        String name = realm.getClass().getName();
-        LOG.debug("RealmClass.getName: {}", name);
-        if (name.equals("org.apache.zeppelin.realm.jwt.KnoxJwtRealm")) {
+        if (realm instanceof KnoxJwtRealm) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private boolean isKerberosRealmEnabled() {
+    Collection<Realm> realmsList = authenticationService.getRealmsList();
+    if (realmsList != null) {
+      for (Realm realm : realmsList) {
+        if (realm instanceof KerberosRealm) {
           return true;
         }
       }
@@ -184,12 +192,13 @@ public class LoginRestApi {
 
       Set<String> roles = authenticationService.getAssociatedRoles();
       String principal = authenticationService.getPrincipal();
-      String ticket = "anonymous".equals(principal) ? "anonymous" : TicketContainer.instance.getTicket(principal);
+      TicketContainer.Entry ticketEntry = "anonymous".equals(principal) ?
+              TicketContainer.ANONYMOUS_ENTRY : TicketContainer.instance.getTicketEntry(principal, roles);
 
       Map<String, String> data = new HashMap<>();
-      data.put("principal", principal);
-      data.put("roles", GSON.toJson(roles));
-      data.put("ticket", ticket);
+      data.put("principal", ticketEntry.getPrincipal());
+      data.put("roles", GSON.toJson(ticketEntry.getRoles()));
+      data.put("ticket", ticketEntry.getTicket());
 
       response = new JsonResponse<>(Status.OK, "", data);
       // if no exception, that's it, we're done!
@@ -257,19 +266,28 @@ public class LoginRestApi {
     }
     if (isKnoxSSOEnabled()) {
       KnoxJwtRealm knoxJwtRealm = getJTWRealm();
-      data.put("redirectURL", constructKnoxUrl(knoxJwtRealm, knoxJwtRealm.getLogout()));
+      data.put("redirectURL",
+          constructUrl(knoxJwtRealm.getProviderUrl(), knoxJwtRealm.getRedirectParam(),
+              knoxJwtRealm.getLogout()));
       data.put("isLogoutAPI", knoxJwtRealm.getLogoutAPI().toString());
+    } else if (isKerberosRealmEnabled()) {
+      KerberosRealm kerberosRealm = getKerberosRealm();
+      data.put("redirectURL",
+          constructUrl(kerberosRealm.getProviderUrl(), kerberosRealm.getRedirectParam(),
+              kerberosRealm.getLogout()));
+      data.put("isLogoutAPI", kerberosRealm.getLogoutAPI().toString());
     }
     JsonResponse<Map<String, String>> response = new JsonResponse<>(status, "", data);
     LOG.info(response.toString());
     return response.build();
   }
 
-  private String constructKnoxUrl(KnoxJwtRealm knoxJwtRealm, String path) {
-    StringBuilder redirectURL = new StringBuilder(knoxJwtRealm.getProviderUrl());
+  private String constructUrl(String providerURL, String redirectParam,
+      String path) {
+    StringBuilder redirectURL = new StringBuilder(providerURL);
     redirectURL.append(path);
-    if (knoxJwtRealm.getRedirectParam() != null) {
-      redirectURL.append("?").append(knoxJwtRealm.getRedirectParam()).append("=");
+    if (redirectParam != null) {
+      redirectURL.append("?").append(redirectParam).append("=");
     }
     return redirectURL.toString();
   }

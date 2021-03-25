@@ -36,12 +36,19 @@ java_import(gateway.jvm, "org.apache.spark.SparkEnv")
 java_import(gateway.jvm, "org.apache.spark.SparkConf")
 java_import(gateway.jvm, "org.apache.spark.api.java.*")
 java_import(gateway.jvm, "org.apache.spark.api.python.*")
+java_import(gateway.jvm, "org.apache.spark.ml.python.*")
 java_import(gateway.jvm, "org.apache.spark.mllib.api.python.*")
+java_import(gateway.jvm, "org.apache.spark.resource.*")
 
 intp = gateway.entry_point
+
+if intp.isSpark3():
+    warnings.filterwarnings(action='ignore', module='pyspark.util')
+
 jsc = intp.getJavaSparkContext()
 
 java_import(gateway.jvm, "org.apache.spark.sql.*")
+java_import(gateway.jvm, "org.apache.spark.sql.api.python.*")
 java_import(gateway.jvm, "org.apache.spark.sql.hive.*")
 java_import(gateway.jvm, "scala.Tuple2")
 
@@ -61,11 +68,16 @@ class IPySparkZeppelinContext(PyZeppelinContext):
     def __init__(self, z, gateway):
         super(IPySparkZeppelinContext, self).__init__(z, gateway)
 
-    def show(self, obj):
+    def show(self, obj, **kwargs):
         from pyspark.sql import DataFrame
         if isinstance(obj, DataFrame):
             print(self.z.showData(obj._jdf))
         else:
-            super(IPySparkZeppelinContext, self).show(obj)
+            super(IPySparkZeppelinContext, self).show(obj, **kwargs)
 
 z = __zeppelin__ = IPySparkZeppelinContext(intp.getZeppelinContext(), gateway)
+
+# add jars to path
+import sys
+jarlist = map(lambda url: url.replace("file:/", "/"), (conf.get("spark.jars") or "").split(","))
+sys.path.extend(filter(lambda jar: jar not in sys.path, jarlist))

@@ -20,7 +20,7 @@ package org.apache.zeppelin.jupyter;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.stub.StreamObserver;
-import org.apache.commons.lang.exception.ExceptionUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.zeppelin.interpreter.InterpreterContext;
 import org.apache.zeppelin.interpreter.InterpreterResult;
 import org.apache.zeppelin.interpreter.InterpreterResultMessageOutput;
@@ -41,7 +41,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.security.SecureRandom;
 import java.util.Iterator;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
@@ -56,7 +55,7 @@ public class JupyterKernelClient {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(JupyterKernelClient.class.getName());
   // used for matching shiny url
-  private static Pattern ShinyListeningPattern =
+  private static final Pattern SHINY_LISTENING_PATTERN =
           Pattern.compile(".*Listening on (http:\\S*).*", Pattern.DOTALL);
 
   private final ManagedChannel channel;
@@ -66,24 +65,27 @@ public class JupyterKernelClient {
 
   private Properties properties;
   private InterpreterContext context;
-  private SecureRandom random = new SecureRandom();
+  private String kernel;
 
   /**
    * Construct client for accessing RouteGuide server at {@code host:port}.
    */
-  public JupyterKernelClient(String host,
-                             int port) {
-    this(ManagedChannelBuilder.forAddress(host, port).usePlaintext(true), new Properties());
+  public JupyterKernelClient(String host, int port, String kernel) {
+    this(ManagedChannelBuilder.forAddress(host, port).usePlaintext(true), new Properties(),
+            kernel);
   }
 
   /**
    * Construct client for accessing RouteGuide server using the existing channel.
    */
-  public JupyterKernelClient(ManagedChannelBuilder<?> channelBuilder, Properties properties) {
+  public JupyterKernelClient(ManagedChannelBuilder<?> channelBuilder,
+                             Properties properties,
+                             String kernel) {
     channel = channelBuilder.build();
     blockingStub = JupyterKernelGrpc.newBlockingStub(channel);
     asyncStub = JupyterKernelGrpc.newStub(channel);
     this.properties = properties;
+    this.kernel = kernel;
   }
 
   public void shutdown() throws InterruptedException {
@@ -110,10 +112,10 @@ public class JupyterKernelClient {
     if (intpClassName != null &&
             (intpClassName.equals("org.apache.zeppelin.r.ShinyInterpreter") ||
                     intpClassName.equals("org.apache.zeppelin.spark.SparkShinyInterpreter"))) {
-      Matcher matcher = ShinyListeningPattern.matcher(response);
+      Matcher matcher = SHINY_LISTENING_PATTERN.matcher(response);
       if (matcher.matches()) {
         String url = matcher.group(1);
-        LOGGER.info("Matching shiny app url: " + url);
+        LOGGER.info("Matching shiny app url: {}", url);
         context.out.clear();
         String defaultHeight = properties.getProperty("zeppelin.R.shiny.iframe_height", "500px");
         String height = context.getLocalProperties().getOrDefault("height", defaultHeight);
@@ -170,7 +172,8 @@ public class JupyterKernelClient {
                 }
                 // explicitly use html output for ir kernel in some cases. otherwise some
                 // R packages doesn't work. e.g. googlevis
-                if (executeResponse.getOutput().contains("<script type=\"text/javascript\">")) {
+                if (kernel.equals("ir") && executeResponse.getOutput()
+                        .contains("<script type=\"text/javascript\">")) {
                   interpreterOutput.write("\n%html ".getBytes());
                 }
                 interpreterOutput.write(executeResponse.getOutput().getBytes());
@@ -196,6 +199,9 @@ public class JupyterKernelClient {
             } catch (IOException e) {
               LOGGER.error("Unexpected IOException", e);
             }
+            break;
+          case CLEAR:
+            interpreterOutput.getInterpreterOutput().clear();
             break;
           default:
             LOGGER.error("Unrecognized type:" + executeResponse.getType());
@@ -303,7 +309,7 @@ public class JupyterKernelClient {
   }
 
   public static void main(String[] args) {
-    JupyterKernelClient client = new JupyterKernelClient("localhost", 50053);
+    JupyterKernelClient client = new JupyterKernelClient("localhost", 50053, "python");
     client.status(StatusRequest.newBuilder().build());
 
     ExecuteResponse response = client.block_execute(ExecuteRequest.newBuilder().

@@ -30,6 +30,7 @@ limitations under the License.
     <ul style="list-style-type: none; padding-left:10px; margin-top: 30px;" >
       <li style="font-weight: 300; font-size:18px; margin: 5px;"><span class="glyphicon glyphicon-import" style="margin-right:10px"></span> Data Ingestion</li>
       <li style="font-weight: 300; font-size:18px; margin: 5px;"><span class="glyphicon glyphicon-eye-open" style="margin-right:10px"></span> Data Discovery</li>
+      <li style="font-weight: 300; font-size:18px; margin: 5px;"><span class="glyphicon glyphicon-filter" style="margin-right:10px"></span> Data Transformation</li>
       <li style="font-weight: 300; font-size:18px; margin: 5px;"><span class="glyphicon glyphicon-wrench" style="margin-right:10px"></span> Data Analytics</li>
       <li style="font-weight: 300; font-size:18px; margin: 5px;"><span class="glyphicon glyphicon-dashboard" style="margin-right:10px"></span> Data Visualization & Collaboration</li>
     </ul>
@@ -83,7 +84,10 @@ limitations under the License.
   * [Configuration API](./usage/rest_api/configuration.html)
   * [Credential API](./usage/rest_api/credential.html)
   * [Helium API](./usage/rest_api/helium.html)
-
+* Zeppelin SDK: Java API of Zeppelin Client
+  * [Client API](./usage/zeppelin_sdk/client_api.html)
+  * [Session API](./usage/zeppelin_sdk/session_api.html)
+  
 #### Setup 
 * Basics 
   * [How to Build Zeppelin](./setup/basics/how_to_build.html)
@@ -111,6 +115,7 @@ limitations under the License.
   * [MongoDB Storage](./setup/storage/storage.html#notebook-storage-in-mongodb)
 * Operation 
   * [Configuration](./setup/operation/configuration.html): lists for Apache Zeppelin
+  * [Monitoring](./setup/operation/monitoring.html): monitoring instructions for Apache Zeppelin
   * [Proxy Setting](./setup/operation/proxy_setting.html)
   * [Upgrading](./setup/operation/upgrading.html): a manual procedure of upgrading Apache Zeppelin version
   * [Trouble Shooting](./setup/operation/trouble_shooting.html)

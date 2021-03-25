@@ -28,9 +28,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.commons.io.IOUtils;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.vfs2.FileObject;
-import org.apache.commons.vfs2.FileSystemException;
 import org.apache.commons.vfs2.FileSystemManager;
 import org.apache.commons.vfs2.NameScope;
 import org.apache.commons.vfs2.Selectors;
@@ -61,13 +60,13 @@ public class VFSNotebookRepo implements NotebookRepo {
   @Override
   public void init(ZeppelinConfiguration conf) throws IOException {
     this.conf = conf;
-    setNotebookDirectory(conf.getRelativeDir(conf.getNotebookDir()));
+    setNotebookDirectory(conf.getNotebookDir());
   }
 
   protected void setNotebookDirectory(String notebookDirPath) throws IOException {
     URI filesystemRoot = null;
     try {
-      LOGGER.info("Using notebookDir: " + notebookDirPath);
+      LOGGER.info("Using notebookDir: {}", notebookDirPath);
       if (conf.isWindowsPath(notebookDirPath)) {
         filesystemRoot = new File(notebookDirPath).toURI();
       } else {
@@ -78,7 +77,7 @@ public class VFSNotebookRepo implements NotebookRepo {
     }
 
     if (filesystemRoot.getScheme() == null) { // it is local path
-      File f = new File(conf.getRelativeDir(filesystemRoot.getPath()));
+      File f = new File(conf.getAbsoluteDir(filesystemRoot.getPath()));
       filesystemRoot = f.toURI();
     }
     this.fsManager = VFS.getManager();
@@ -105,7 +104,7 @@ public class VFSNotebookRepo implements NotebookRepo {
     Map<String, NoteInfo> noteInfos = new HashMap<>();
     if (fileObject.isFolder()) {
       if (fileObject.getName().getBaseName().startsWith(".")) {
-        LOGGER.warn("Skip hidden folder: " + fileObject.getName().getPath());
+        LOGGER.warn("Skip hidden folder: {}", fileObject.getName().getPath());
         return noteInfos;
       }
       for (FileObject child : fileObject.getChildren()) {
@@ -123,9 +122,6 @@ public class VFSNotebookRepo implements NotebookRepo {
         } catch (IOException e) {
           LOGGER.warn(e.getMessage());
         }
-
-      } else {
-        LOGGER.debug("Unrecognized note file: " + noteFileName);
       }
     }
     return noteInfos;
@@ -145,7 +141,7 @@ public class VFSNotebookRepo implements NotebookRepo {
 
   @Override
   public synchronized void save(Note note, AuthenticationInfo subject) throws IOException {
-    LOGGER.info("Saving note " + note.getId() + " to " + buildNoteFileName(note));
+    LOGGER.info("Saving note {} to {}", note.getId(), buildNoteFileName(note));
     // write to tmp file first, then rename it to the {note_name}_{note_id}.zpln
     FileObject noteJson = rootNotebookFileObject.resolveFile(
         buildNoteTempFileName(note), NameScope.DESCENDENT);
@@ -163,9 +159,11 @@ public class VFSNotebookRepo implements NotebookRepo {
   }
 
   @Override
-  public void move(String noteId, String notePath, String newNotePath,
+  public void move(String noteId,
+                   String notePath,
+                   String newNotePath,
                    AuthenticationInfo subject) throws IOException {
-    LOGGER.info("Move note " + noteId + " from " + notePath + " to " + newNotePath);
+    LOGGER.info("Move note {} from {} to {}", noteId, notePath, newNotePath);
     FileObject fileObject = rootNotebookFileObject.resolveFile(
         buildNoteFileName(noteId, notePath), NameScope.DESCENDENT);
     FileObject destFileObject = rootNotebookFileObject.resolveFile(
@@ -178,7 +176,7 @@ public class VFSNotebookRepo implements NotebookRepo {
   @Override
   public void move(String folderPath, String newFolderPath,
                    AuthenticationInfo subject) throws IOException{
-    LOGGER.info("Move folder from " + folderPath + " to " + newFolderPath);
+    LOGGER.info("Move folder from {} to {}", folderPath, newFolderPath);
     FileObject fileObject = rootNotebookFileObject.resolveFile(
         folderPath.substring(1), NameScope.DESCENDENT);
     FileObject destFileObject = rootNotebookFileObject.resolveFile(
@@ -191,7 +189,7 @@ public class VFSNotebookRepo implements NotebookRepo {
   @Override
   public void remove(String noteId, String notePath, AuthenticationInfo subject)
       throws IOException {
-    LOGGER.info("Remove note: " + noteId + ", notePath: " + notePath);
+    LOGGER.info("Remove note: {}, notePath: {}", noteId, notePath);
     FileObject noteFile = rootNotebookFileObject.resolveFile(
         buildNoteFileName(noteId, notePath), NameScope.DESCENDENT);
     noteFile.delete(Selectors.SELECT_SELF);
@@ -199,7 +197,7 @@ public class VFSNotebookRepo implements NotebookRepo {
 
   @Override
   public void remove(String folderPath, AuthenticationInfo subject) throws IOException {
-    LOGGER.info("Remove folder: " + folderPath);
+    LOGGER.info("Remove folder: {}", folderPath);
     FileObject folderObject = rootNotebookFileObject.resolveFile(
         folderPath.substring(1), NameScope.DESCENDENT);
     folderObject.deleteAll();
@@ -207,7 +205,7 @@ public class VFSNotebookRepo implements NotebookRepo {
 
   @Override
   public void close() {
-    //no-op    
+    //no-op
   }
 
   @Override
@@ -246,6 +244,5 @@ public class VFSNotebookRepo implements NotebookRepo {
       LOGGER.error("Cannot update notebook directory", e);
     }
   }
-
 }
 

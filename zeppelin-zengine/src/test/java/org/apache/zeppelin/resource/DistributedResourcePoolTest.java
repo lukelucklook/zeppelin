@@ -20,10 +20,11 @@ import com.google.gson.Gson;
 import org.apache.zeppelin.interpreter.AbstractInterpreterTest;
 import org.apache.zeppelin.interpreter.InterpreterContext;
 import org.apache.zeppelin.interpreter.InterpreterException;
-import org.apache.zeppelin.interpreter.InterpreterOption;
 import org.apache.zeppelin.interpreter.InterpreterResult;
 import org.apache.zeppelin.interpreter.InterpreterSetting;
 import org.apache.zeppelin.interpreter.remote.RemoteInterpreter;
+import org.apache.zeppelin.notebook.Note;
+import org.apache.zeppelin.notebook.NoteInfo;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -31,6 +32,7 @@ import org.junit.Test;
 import static org.apache.zeppelin.interpreter.InterpreterOption.ISOLATED;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.when;
 
 /**
  * Unittest for DistributedResourcePool
@@ -42,9 +44,15 @@ public class DistributedResourcePoolTest extends AbstractInterpreterTest {
   private InterpreterContext context;
 
 
+  @Override
   @Before
   public void setUp() throws Exception {
     super.setUp();
+    Note note1 = new Note(new NoteInfo("note1", "/note_1"));
+    Note note2 = new Note(new NoteInfo("note2", "/note_2"));
+    when(mockNotebook.getNote("note1")).thenReturn(note1);
+    when(mockNotebook.getNote("note2")).thenReturn(note2);
+
     InterpreterSetting interpreterSetting = interpreterSettingManager.getByName("mock_resource_pool");
     interpreterSetting.getOption().setPerNote(ISOLATED);
     intp1 = (RemoteInterpreter) interpreterSetting.getInterpreter("user1", "note1", "mock_resource_pool");
@@ -59,6 +67,7 @@ public class DistributedResourcePoolTest extends AbstractInterpreterTest {
     intp2.open();
   }
 
+  @Override
   @After
   public void tearDown() throws Exception {
     interpreterSettingManager.close();
@@ -96,7 +105,6 @@ public class DistributedResourcePoolTest extends AbstractInterpreterTest {
         set.addAll(pool3.getAll());
 
         ResourceSet remoteSet = new ResourceSet();
-        Gson gson = new Gson();
         for (Resource s : set) {
           RemoteResource remoteResource = RemoteResource.fromJson(s.toJson());
           remoteResource.setResourcePoolConnector(this);
@@ -150,7 +158,6 @@ public class DistributedResourcePoolTest extends AbstractInterpreterTest {
   @Test
   public void testResourcePoolUtils() throws InterpreterException {
     Gson gson = new Gson();
-    InterpreterResult ret;
 
     // when create some resources
     intp1.interpret("put note1:paragraph1:key1 value1", context);

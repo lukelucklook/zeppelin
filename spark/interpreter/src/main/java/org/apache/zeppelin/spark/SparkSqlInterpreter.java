@@ -17,11 +17,11 @@
 
 package org.apache.zeppelin.spark;
 
-import org.apache.commons.lang.exception.ExceptionUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.spark.SparkContext;
-import org.apache.spark.sql.SQLContext;
+import org.apache.spark.sql.AnalysisException;
 import org.apache.zeppelin.interpreter.AbstractInterpreter;
-import org.apache.zeppelin.interpreter.BaseZeppelinContext;
+import org.apache.zeppelin.interpreter.ZeppelinContext;
 import org.apache.zeppelin.interpreter.InterpreterContext;
 import org.apache.zeppelin.interpreter.InterpreterException;
 import org.apache.zeppelin.interpreter.InterpreterResult;
@@ -33,6 +33,7 @@ import org.apache.zeppelin.scheduler.SchedulerFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Properties;
@@ -41,7 +42,7 @@ import java.util.Properties;
  * Spark SQL interpreter for Zeppelin.
  */
 public class SparkSqlInterpreter extends AbstractInterpreter {
-  private Logger logger = LoggerFactory.getLogger(SparkSqlInterpreter.class);
+  private static final Logger LOGGER = LoggerFactory.getLogger(SparkSqlInterpreter.class);
 
   private SparkInterpreter sparkInterpreter;
   private SqlSplitter sqlSplitter;
@@ -69,7 +70,7 @@ public class SparkSqlInterpreter extends AbstractInterpreter {
   }
 
   @Override
-  public BaseZeppelinContext getZeppelinContext() {
+  public ZeppelinContext getZeppelinContext() {
     return null;
   }
 
@@ -82,10 +83,9 @@ public class SparkSqlInterpreter extends AbstractInterpreter {
     }
     Utils.printDeprecateMessage(sparkInterpreter.getSparkVersion(), context, properties);
     sparkInterpreter.getZeppelinContext().setInterpreterContext(context);
-    SQLContext sqlc = sparkInterpreter.getSQLContext();
-    SparkContext sc = sqlc.sparkContext();
+    Object sqlContext = sparkInterpreter.getSQLContext();
+    SparkContext sc = sparkInterpreter.getSparkContext();
 
-    StringBuilder builder = new StringBuilder();
     List<String> sqls = sqlSplitter.splitSql(st);
     int maxResult = Integer.parseInt(context.getLocalProperties().getOrDefault("limit",
             "" + sparkInterpreter.getZeppelinContext().getMaxResult()));
@@ -93,28 +93,61 @@ public class SparkSqlInterpreter extends AbstractInterpreter {
     sc.setLocalProperty("spark.scheduler.pool", context.getLocalProperties().get("pool"));
     sc.setJobGroup(Utils.buildJobGroupId(context), Utils.buildJobDesc(context), false);
     String curSql = null;
+    ClassLoader originalClassLoader = Thread.currentThread().getContextClassLoader();
     try {
+      if (!sparkInterpreter.isScala212()) {
+        // TODO(zjffdu) scala 2.12 still doesn't work for codegen (ZEPPELIN-4627)
+      Thread.currentThread().setContextClassLoader(sparkInterpreter.getScalaShellClassLoader());
+      }
+      Method method = sqlContext.getClass().getMethod("sql", String.class);
       for (String sql : sqls) {
         curSql = sql;
-        String result = sparkInterpreter.getZeppelinContext().showData(sqlc.sql(sql), maxResult);
-        builder.append(result);
+        String result = sparkInterpreter.getZeppelinContext()
+                .showData(method.invoke(sqlContext, sql), maxResult);
+        context.out.write(result);
       }
+      context.out.flush();
     } catch (Exception e) {
-      builder.append("\n%text Error happens in sql: " + curSql + "\n");
-      if (Boolean.parseBoolean(getProperty("zeppelin.spark.sql.stacktrace", "false"))) {
-        builder.append(ExceptionUtils.getStackTrace(e));
-      } else {
-        logger.error("Invocation target exception", e);
-        String msg = e.getCause().getMessage()
-                + "\nset zeppelin.spark.sql.stacktrace = true to see full stacktrace";
-        builder.append(msg);
+      try {
+        if (e.getCause() instanceof AnalysisException) {
+          // just return the error message from spark if it is AnalysisException
+          context.out.write(e.getCause().getMessage());
+          context.out.flush();
+          return new InterpreterResult(Code.ERROR);
+        } else {
+          LOGGER.error("Error happens in sql: {}", curSql, e);
+          context.out.write("\nError happens in sql: " + curSql + "\n");
+          if (Boolean.parseBoolean(getProperty("zeppelin.spark.sql.stacktrace", "false"))) {
+            if (e.getCause() != null) {
+              context.out.write(ExceptionUtils.getStackTrace(e.getCause()));
+            } else {
+              context.out.write(ExceptionUtils.getStackTrace(e));
+            }
+          } else {
+            StringBuilder msgBuilder = new StringBuilder();
+            if (e.getCause() != null) {
+              msgBuilder.append(e.getCause().getMessage());
+            } else {
+              msgBuilder.append(e.getMessage());
+            }
+            msgBuilder.append("\nset zeppelin.spark.sql.stacktrace = true to see full stacktrace");
+            context.out.write(msgBuilder.toString());
+          }
+          context.out.flush();
+          return new InterpreterResult(Code.ERROR);
+        }
+      } catch (IOException ex) {
+        LOGGER.error("Fail to write output", ex);
+        return new InterpreterResult(Code.ERROR);
       }
-      return new InterpreterResult(Code.ERROR, builder.toString());
     } finally {
       sc.clearJobGroup();
+      if (!sparkInterpreter.isScala212()) {
+        Thread.currentThread().setContextClassLoader(originalClassLoader);
+      }
     }
 
-    return new InterpreterResult(Code.SUCCESS, builder.toString());
+    return new InterpreterResult(Code.SUCCESS);
   }
 
   @Override

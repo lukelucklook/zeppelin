@@ -23,21 +23,20 @@
     <parent>
         <artifactId>zeppelin-interpreter-parent</artifactId>
         <groupId>org.apache.zeppelin</groupId>
-        <version>0.9.0-SNAPSHOT</version>
+        <version>0.10.0-SNAPSHOT</version>
         <relativePath>../zeppelin-interpreter-parent/pom.xml</relativePath>
     </parent>
 
     <groupId>org.apache.zeppelin</groupId>
     <artifactId>r</artifactId>
     <packaging>jar</packaging>
-    <version>0.9.0-SNAPSHOT</version>
+    <version>0.10.0-SNAPSHOT</version>
     <name>Zeppelin: R</name>
     <description>Zeppelin R support</description>
 
     <properties>
         <interpreter.name>r</interpreter.name>
-        <jsoup.version>1.12.1</jsoup.version>
-        <spark.version>2.4.4</spark.version>
+        <spark.version>2.4.5</spark.version>
         <grpc.version>1.15.0</grpc.version>
 
         <spark.archive>spark-${spark.version}</spark.archive>
@@ -88,8 +87,8 @@
         </dependency>
         
         <dependency>
-            <groupId>commons-lang</groupId>
-            <artifactId>commons-lang</artifactId>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
         </dependency>
 
         <dependency>
@@ -108,6 +107,13 @@
             <groupId>org.apache.spark</groupId>
             <artifactId>spark-core_2.11</artifactId>
             <version>${spark.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-client</artifactId>
+            <version>2.7.7</version>
+            <scope>compile</scope>
         </dependency>
 
         <dependency>
@@ -158,7 +164,6 @@
 
             <plugin>
                 <artifactId>maven-resources-plugin</artifactId>
-                <version>2.7</version>
                 <executions>
                     <execution>
                         <id>copy-sparkr-files</id>
@@ -183,7 +188,6 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>${plugin.shade.version}</version>
                 <configuration>
                     <filters>
                         <filter>
@@ -198,7 +202,7 @@
                     </transformers>
                     <artifactSet>
                         <excludes>
-                            <exclude>org.apache.zeppelin:zeppelin-interpreter-api</exclude>
+                            <exclude>org.apache.zeppelin:zeppelin-interpreter-shaded</exclude>
                         </excludes>
                     </artifactSet>
                     <outputFile>${project.build.directory}/../../interpreter/r/${interpreter.jar.name}-${project.version}.jar</outputFile>
@@ -219,7 +223,7 @@
                 <configuration>
                     <forkCount>1</forkCount>
                     <reuseForks>false</reuseForks>
-                    <argLine>-Xmx2048m -XX:MaxPermSize=256m</argLine>
+                    <argLine>-Xmx2048m -XX:MaxMetaspaceSize=512m</argLine>
                     <environmentVariables>
                       <ZEPPELIN_HOME>${basedir}/../</ZEPPELIN_HOME>
                     </environmentVariables>
@@ -230,7 +234,6 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
-                <version>3.0.2</version>
                 <executions>
                     <execution>
                         <goals>

@@ -23,14 +23,14 @@
   <parent>
     <artifactId>zeppelin-interpreter-parent</artifactId>
     <groupId>org.apache.zeppelin</groupId>
-    <version>0.9.0-SNAPSHOT</version>
+    <version>0.10.0-SNAPSHOT</version>
     <relativePath>../zeppelin-interpreter-parent/pom.xml</relativePath>
   </parent>
 
   <groupId>org.apache.zeppelin</groupId>
   <artifactId>zeppelin-bigquery</artifactId>
   <packaging>jar</packaging>
-  <version>0.9.0-SNAPSHOT</version>
+  <version>0.10.0-SNAPSHOT</version>
   <name>Zeppelin: BigQuery interpreter</name>
 
   <properties>
@@ -42,7 +42,7 @@
     <!-- library versions -->
     <bigquery.api.version>v2-rev20190917-1.30.3</bigquery.api.version>
     <gson.version>2.8.6</gson.version>
-    <guava.version>22.0</guava.version>
+    <guava.version>24.1.1-jre</guava.version>
 
     <interpreter.name>bigquery</interpreter.name>
   </properties>

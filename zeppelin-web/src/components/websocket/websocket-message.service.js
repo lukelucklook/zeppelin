@@ -81,6 +81,10 @@ function WebsocketMessageService($rootScope, websocketEvents) {
       websocketEvents.sendNewEvent({op: 'GET_NOTE', data: {id: noteId}});
     },
 
+    reloadNote: function(noteId) {
+      websocketEvents.sendNewEvent({op: 'RELOAD_NOTE', data: {id: noteId}});
+    },
+
     updateNote: function(noteId, noteName, noteConfig) {
       websocketEvents.sendNewEvent({op: 'NOTE_UPDATE', data: {id: noteId, name: noteName, config: noteConfig}});
     },
@@ -188,6 +192,13 @@ function WebsocketMessageService($rootScope, websocketEvents) {
     },
 
     runParagraph: function(paragraphId, paragraphTitle, paragraphData, paragraphConfig, paragraphParams) {
+      // short circuit update paragraph status for immediate visual feedback without waiting for server response
+      $rootScope.$broadcast('updateStatus', {
+        id: paragraphId,
+        status: 'PENDING',
+      });
+
+      // send message to server
       websocketEvents.sendNewEvent({
         op: 'RUN_PARAGRAPH',
         data: {
@@ -201,6 +212,15 @@ function WebsocketMessageService($rootScope, websocketEvents) {
     },
 
     runAllParagraphs: function(noteId, paragraphs) {
+      // short circuit update paragraph status for immediate visual feedback without waiting for server response
+      paragraphs.forEach((p) => {
+        $rootScope.$broadcast('updateStatus', {
+          id: p.id,
+          status: 'PENDING',
+        });
+      });
+
+      // send message to server
       websocketEvents.sendNewEvent({
         op: 'RUN_ALL_PARAGRAPHS',
         data: {
@@ -270,12 +290,12 @@ function WebsocketMessageService($rootScope, websocketEvents) {
       });
     },
 
-    convertNote: function(note, name) {
+    convertNote: function(noteId, noteName) {
       websocketEvents.sendNewEvent({
         op: 'CONVERT_NOTE_NBFORMAT',
         data: {
-          note: note,
-          name: name,
+          noteId: noteId,
+          noteName: noteName,
         },
       });
     },
@@ -330,12 +350,12 @@ function WebsocketMessageService($rootScope, websocketEvents) {
       });
     },
 
-    getEditorSetting: function(paragraphId, magic) {
+    getEditorSetting: function(paragraphId, pararaphText) {
       websocketEvents.sendNewEvent({
         op: 'EDITOR_SETTING',
         data: {
           paragraphId: paragraphId,
-          magic: magic,
+          paragraphText: pararaphText,
         },
       });
     },
@@ -363,8 +383,8 @@ function WebsocketMessageService($rootScope, websocketEvents) {
     },
 
     saveInterpreterBindings: function(noteId, selectedSettingIds) {
-      // websocketEvents.sendNewEvent({op: 'SAVE_INTERPRETER_BINDINGS',
-      //   data: {noteId: noteId, selectedSettingIds: selectedSettingIds}});
+      websocketEvents.sendNewEvent({op: 'SAVE_INTERPRETER_BINDINGS',
+        data: {noteId: noteId, selectedSettingIds: selectedSettingIds}});
     },
 
     listConfigurations: function() {

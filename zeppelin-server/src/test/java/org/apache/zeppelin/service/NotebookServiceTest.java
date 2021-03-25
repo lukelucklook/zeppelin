@@ -33,6 +33,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -40,7 +41,8 @@ import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
-import org.apache.commons.lang.StringUtils;
+import com.google.common.io.Files;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.zeppelin.conf.ZeppelinConfiguration;
 import org.apache.zeppelin.interpreter.Interpreter;
 import org.apache.zeppelin.interpreter.Interpreter.FormType;
@@ -53,16 +55,19 @@ import org.apache.zeppelin.interpreter.ManagedInterpreterGroup;
 import org.apache.zeppelin.notebook.AuthorizationService;
 import org.apache.zeppelin.notebook.Note;
 import org.apache.zeppelin.notebook.NoteInfo;
+import org.apache.zeppelin.notebook.NoteManager;
 import org.apache.zeppelin.notebook.Notebook;
 import org.apache.zeppelin.notebook.Paragraph;
 import org.apache.zeppelin.notebook.repo.InMemoryNotebookRepo;
 import org.apache.zeppelin.notebook.repo.NotebookRepo;
+import org.apache.zeppelin.notebook.repo.VFSNotebookRepo;
 import org.apache.zeppelin.notebook.scheduler.QuartzSchedulerService;
 import org.apache.zeppelin.notebook.scheduler.SchedulerService;
 import org.apache.zeppelin.search.LuceneSearch;
 import org.apache.zeppelin.search.SearchService;
 import org.apache.zeppelin.user.AuthenticationInfo;
 import org.apache.zeppelin.user.Credentials;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
@@ -74,6 +79,7 @@ public class NotebookServiceTest {
 
   private static NotebookService notebookService;
 
+  private File notebookDir;
   private ServiceContext context =
       new ServiceContext(AuthenticationInfo.ANONYMOUS, new HashSet<>());
 
@@ -84,13 +90,17 @@ public class NotebookServiceTest {
 
   @Before
   public void setUp() throws Exception {
+    notebookDir = Files.createTempDir().getAbsoluteFile();
+    System.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_NOTEBOOK_DIR.getVarName(),
+            notebookDir.getAbsolutePath());
     ZeppelinConfiguration zeppelinConfiguration = ZeppelinConfiguration.create();
-    NotebookRepo notebookRepo = new InMemoryNotebookRepo();
+    NotebookRepo notebookRepo = new VFSNotebookRepo();
+    notebookRepo.init(zeppelinConfiguration);
 
     InterpreterSettingManager mockInterpreterSettingManager = mock(InterpreterSettingManager.class);
     InterpreterFactory mockInterpreterFactory = mock(InterpreterFactory.class);
     Interpreter mockInterpreter = mock(Interpreter.class);
-    when(mockInterpreterFactory.getInterpreter(any(), any(), any(), any()))
+    when(mockInterpreterFactory.getInterpreter(any(), any()))
         .thenReturn(mockInterpreter);
     when(mockInterpreter.interpret(eq("invalid_code"), any()))
         .thenReturn(new InterpreterResult(Code.ERROR, "failed"));
@@ -105,19 +115,23 @@ public class NotebookServiceTest {
     when(mockInterpreterGroup.getInterpreterSetting()).thenReturn(mockInterpreterSetting);
     when(mockInterpreterSetting.getStatus()).thenReturn(InterpreterSetting.Status.READY);
     SearchService searchService = new LuceneSearch(zeppelinConfiguration);
-    Credentials credentials = new Credentials(false, null, null);
+    Credentials credentials = new Credentials();
+    NoteManager noteManager = new NoteManager(notebookRepo);
+    AuthorizationService authorizationService = new AuthorizationService(noteManager, zeppelinConfiguration);
     Notebook notebook =
         new Notebook(
             zeppelinConfiguration,
+            authorizationService,
             notebookRepo,
+            noteManager,
             mockInterpreterFactory,
             mockInterpreterSettingManager,
             searchService,
             credentials,
             null);
-    AuthorizationService authorizationService =
-        new AuthorizationService(notebook, notebook.getConf());
-    SchedulerService schedulerService = new QuartzSchedulerService(zeppelinConfiguration, notebook);
+
+    QuartzSchedulerService schedulerService = new QuartzSchedulerService(zeppelinConfiguration, notebook);
+    schedulerService.waitForFinishInit();
     notebookService =
         new NotebookService(
             notebook, authorizationService, zeppelinConfiguration, schedulerService);
@@ -128,6 +142,11 @@ public class NotebookServiceTest {
         .thenReturn(mockInterpreterSetting);
   }
 
+  @After
+  public void tearDown() {
+    notebookDir.delete();
+  }
+
   @Test
   public void testNoteOperations() throws IOException {
     // get home note
@@ -136,14 +155,14 @@ public class NotebookServiceTest {
     verify(callback).onSuccess(homeNote, context);
 
     // create note
-    Note note1 = notebookService.createNote("/folder_1/note1", "test", context, callback);
+    Note note1 = notebookService.createNote("/folder_1/note1", "test", true, context, callback);
     assertEquals("note1", note1.getName());
     assertEquals(1, note1.getParagraphCount());
     verify(callback).onSuccess(note1, context);
 
     // create duplicated note
     reset(callback);
-    Note note2 = notebookService.createNote("/folder_1/note1", "test", context, callback);
+    Note note2 = notebookService.createNote("/folder_1/note1", "test", true, context, callback);
     assertNull(note2);
     ArgumentCaptor<Exception> exception = ArgumentCaptor.forClass(Exception.class);
     verify(callback).onFailure(exception.capture(), any(ServiceContext.class));
@@ -184,7 +203,7 @@ public class NotebookServiceTest {
     assertEquals("/folder_4/new_name", notesInfo.get(0).getPath());
 
     // create another note
-    note2 = notebookService.createNote("/note2", "test", context, callback);
+    note2 = notebookService.createNote("/note2", "test", true, context, callback);
     assertEquals("note2", note2.getName());
     verify(callback).onSuccess(note2, context);
 
@@ -315,18 +334,18 @@ public class NotebookServiceTest {
   @Test
   public void testParagraphOperations() throws IOException {
     // create note
-    Note note1 = notebookService.createNote("note1", "python", context, callback);
+    Note note1 = notebookService.createNote("note1", "python", false, context, callback);
     assertEquals("note1", note1.getName());
-    assertEquals(1, note1.getParagraphCount());
+    assertEquals(0, note1.getParagraphCount());
     verify(callback).onSuccess(note1, context);
 
     // add paragraph
     reset(callback);
-    Paragraph p = notebookService.insertParagraph(note1.getId(), 1, new HashMap<>(), context,
+    Paragraph p = notebookService.insertParagraph(note1.getId(), 0, new HashMap<>(), context,
         callback);
     assertNotNull(p);
     verify(callback).onSuccess(p, context);
-    assertEquals(2, note1.getParagraphCount());
+    assertEquals(1, note1.getParagraphCount());
 
     // update paragraph
     reset(callback);
@@ -343,38 +362,33 @@ public class NotebookServiceTest {
 
     // run paragraph asynchronously
     reset(callback);
+    p.getConfig().put("colWidth", "6.0");
+    p.getConfig().put("title", true);
     boolean runStatus = notebookService.runParagraph(note1.getId(), p.getId(), "my_title", "1+1",
-        new HashMap<>(), new HashMap<>(), false, false, context, callback);
+        new HashMap<>(), new HashMap<>(), null, false, false, context, callback);
     assertTrue(runStatus);
     verify(callback).onSuccess(p, context);
+    assertEquals(2, p.getConfig().size());
 
     // run paragraph synchronously via correct code
     reset(callback);
     runStatus = notebookService.runParagraph(note1.getId(), p.getId(), "my_title", "1+1",
-        new HashMap<>(), new HashMap<>(), false, true, context, callback);
+        new HashMap<>(), new HashMap<>(), null, false, true, context, callback);
     assertTrue(runStatus);
     verify(callback).onSuccess(p, context);
+    assertEquals(2, p.getConfig().size());
 
-    // run all paragraphs
+    // run all paragraphs, with null paragraph list provided
     reset(callback);
-    notebookService.runAllParagraphs(
+    assertTrue(notebookService.runAllParagraphs(
             note1.getId(),
-            gson.fromJson(gson.toJson(note1.getParagraphs()), new TypeToken<List>(){}.getType()),
-            context, callback);
-    verify(callback, times(2)).onSuccess(any(), any());
+            null,
+            context, callback));
 
-    // run paragraph synchronously via invalid code
-    //TODO(zjffdu) must sleep for a while, otherwise will get wrong status. This should be due to
-    //bug of job component.
-    try {
-      Thread.sleep(1000);
-    } catch (InterruptedException e) {
-      e.printStackTrace();
-    }
     reset(callback);
     runStatus = notebookService.runParagraph(note1.getId(), p.getId(), "my_title", "invalid_code",
-        new HashMap<>(), new HashMap<>(), false, true, context, callback);
-    assertFalse(runStatus);
+        new HashMap<>(), new HashMap<>(), null, false, true, context, callback);
+    assertTrue(runStatus);
     // TODO(zjffdu) Enable it after ZEPPELIN-3699
     // assertNotNull(p.getResult());
     verify(callback).onSuccess(p, context);

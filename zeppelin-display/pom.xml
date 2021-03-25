@@ -23,14 +23,14 @@
   <parent>
     <artifactId>zeppelin</artifactId>
     <groupId>org.apache.zeppelin</groupId>
-    <version>0.9.0-SNAPSHOT</version>
+    <version>0.10.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
 
   <groupId>org.apache.zeppelin</groupId>
   <artifactId>zeppelin-display</artifactId>
   <packaging>jar</packaging>
-  <version>0.9.0-SNAPSHOT</version>
+  <version>0.10.0-SNAPSHOT</version>
   <name>Zeppelin: Display system apis</name>
 
   <properties>
@@ -79,11 +79,6 @@
     </dependency>
 
     <dependency>
-      <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-log4j12</artifactId>
-    </dependency>
-
-    <dependency>
       <groupId>junit</groupId>
       <artifactId>junit</artifactId>
       <scope>test</scope>
@@ -115,7 +110,6 @@
     <plugins>
       <plugin>
         <artifactId>maven-failsafe-plugin</artifactId>
-        <version>${plugin.failsafe.version}</version>
         <executions>
           <execution>
             <goals>
@@ -132,7 +126,6 @@
       <plugin>
         <groupId>org.scala-tools</groupId>
         <artifactId>maven-scala-plugin</artifactId>
-        <version>${plugin.scala.version}</version>
         <executions>
           <execution>
             <id>compile</id>
@@ -160,7 +153,6 @@
       <plugin>
         <groupId>org.scalatest</groupId>
         <artifactId>scalatest-maven-plugin</artifactId>
-        <version>${plugin.scalatest.version}</version>
         <executions>
           <execution>
             <id>test</id>

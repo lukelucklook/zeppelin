@@ -39,7 +39,6 @@ import org.apache.zeppelin.interpreter.InterpreterNotFoundException;
 import org.apache.zeppelin.interpreter.InterpreterSettingManager;
 import org.apache.zeppelin.interpreter.ManagedInterpreterGroup;
 import org.apache.zeppelin.interpreter.remote.RemoteInterpreterProcess;
-import org.apache.zeppelin.interpreter.thrift.RemoteInterpreterService;
 import org.apache.zeppelin.notebook.Paragraph;
 import org.apache.zeppelin.resource.DistributedResourcePool;
 import org.apache.zeppelin.resource.Resource;
@@ -75,7 +74,7 @@ public class Helium {
     this(
         conf.getHeliumConfPath(),
         conf.getHeliumRegistry(),
-        new File(conf.getRelativeDir(ConfVars.ZEPPELIN_DEP_LOCALREPO), "helium-registry-cache"),
+        new File(conf.getAbsoluteDir(ConfVars.ZEPPELIN_DEP_LOCALREPO), "helium-registry-cache"),
         heliumBundleFactory,
         heliumApplicationFactory,
         interpreterSettingManager);
@@ -543,14 +542,8 @@ public class Helium {
           resourceSet.addAll(localPool.getAll());
         }
       } else if (remoteInterpreterProcess.isRunning()) {
-        List<String> resourceList = remoteInterpreterProcess.callRemoteFunction(
-            new RemoteInterpreterProcess.RemoteFunction<List<String>>() {
-              @Override
-              public List<String> call(RemoteInterpreterService.Client client) throws Exception {
-                return client.resourcePoolGetAll();
-              }
-            }
-        );
+        List<String> resourceList = remoteInterpreterProcess.callRemoteFunction(client ->
+                client.resourcePoolGetAll());
         Gson gson = new Gson();
         for (String res : resourceList) {
           resourceSet.add(gson.fromJson(res, Resource.class));

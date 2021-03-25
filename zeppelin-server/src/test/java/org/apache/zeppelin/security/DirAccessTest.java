@@ -16,40 +16,49 @@
  */
 package org.apache.zeppelin.security;
 
-import org.apache.commons.httpclient.HttpClient;
-import org.apache.commons.httpclient.HttpStatus;
-import org.apache.commons.httpclient.methods.GetMethod;
 import org.junit.Test;
-
+import org.apache.http.HttpStatus;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.util.EntityUtils;
 import org.apache.zeppelin.conf.ZeppelinConfiguration;
 import org.apache.zeppelin.rest.AbstractTestRestApi;
+
+import static org.junit.Assert.assertEquals;
+
+import java.nio.charset.StandardCharsets;
 
 public class DirAccessTest extends AbstractTestRestApi {
   @Test
   public void testDirAccessForbidden() throws Exception {
     synchronized (this) {
-      System.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_SERVER_DEFAULT_DIR_ALLOWED
-              .getVarName(), "false");
-      AbstractTestRestApi.startUp(DirAccessTest.class.getSimpleName());
-      HttpClient httpClient = new HttpClient();
-      GetMethod getMethod = new GetMethod(getUrlToTest() + "/app/");
-      httpClient.executeMethod(getMethod);
-      AbstractTestRestApi.shutDown();
-      assert getMethod.getStatusCode() == HttpStatus.SC_FORBIDDEN;
+      try {
+        System.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_SERVER_DEFAULT_DIR_ALLOWED
+                .getVarName(), "false");
+        AbstractTestRestApi.startUp(DirAccessTest.class.getSimpleName());
+        CloseableHttpResponse getMethod = getHttpClient().execute(new HttpGet(getUrlToTest() + "/app/"));
+        LOG.info("Invoke getMethod - " + EntityUtils.toString(getMethod.getEntity(), StandardCharsets.UTF_8));
+
+        assertEquals(HttpStatus.SC_FORBIDDEN, getMethod.getStatusLine().getStatusCode());
+      } finally {
+        AbstractTestRestApi.shutDown();
+      }
     }
   }
 
   @Test
   public void testDirAccessOk() throws Exception {
     synchronized (this) {
-      System.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_SERVER_DEFAULT_DIR_ALLOWED
-              .getVarName(), "true");
-      AbstractTestRestApi.startUp(DirAccessTest.class.getSimpleName());
-      HttpClient httpClient = new HttpClient();
-      GetMethod getMethod = new GetMethod(getUrlToTest() + "/app/");
-      httpClient.executeMethod(getMethod);
-      AbstractTestRestApi.shutDown();
-      assert getMethod.getStatusCode() == HttpStatus.SC_OK;
+      try {
+        System.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_SERVER_DEFAULT_DIR_ALLOWED
+                .getVarName(), "true");
+        AbstractTestRestApi.startUp(DirAccessTest.class.getSimpleName());
+        CloseableHttpResponse getMethod = getHttpClient().execute(new HttpGet(getUrlToTest() + "/app/"));
+        LOG.info("Invoke getMethod - " + EntityUtils.toString(getMethod.getEntity(), StandardCharsets.UTF_8));
+        assertEquals(HttpStatus.SC_OK, getMethod.getStatusLine().getStatusCode());
+      } finally {
+        AbstractTestRestApi.shutDown();
+      }
     }
   }
 

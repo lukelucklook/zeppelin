@@ -53,25 +53,31 @@ class SparkScala211Interpreter(override val conf: SparkConf,
 
   override def open(): Unit = {
     super.open()
-    if (conf.get("spark.master", "local") == "yarn-client") {
+    if (sparkMaster == "yarn-client") {
       System.setProperty("SPARK_YARN_MODE", "true")
     }
     // Only Spark1 requires to create http server, Spark2 removes HttpServer class.
     val rootDir = conf.get("spark.repl.classdir", System.getProperty("java.io.tmpdir"))
-    val outputDir = Files.createTempDirectory(Paths.get(rootDir), "spark").toFile
+    this.outputDir = Files.createTempDirectory(Paths.get(rootDir), "spark").toFile
+    LOGGER.info("Scala shell repl output dir: " + outputDir.getAbsolutePath)
     outputDir.deleteOnExit()
     conf.set("spark.repl.class.outputDir", outputDir.getAbsolutePath)
     startHttpServer(outputDir).foreach { case (server, uri) =>
       sparkHttpServer = server
       conf.set("spark.repl.class.uri", uri)
     }
+    val target = conf.get("spark.repl.target", "jvm-1.6")
 
     val settings = new Settings()
     settings.processArguments(List("-Yrepl-class-based",
       "-Yrepl-outdir", s"${outputDir.getAbsolutePath}"), true)
     settings.embeddedDefaults(sparkInterpreterClassLoader)
     settings.usejavacp.value = true
-    settings.classpath.value = getUserJars.mkString(File.pathSeparator)
+    settings.target.value = target
+
+    this.userJars = getUserJars()
+    LOGGER.info("UserJars: " + userJars.mkString(File.pathSeparator))
+    settings.classpath.value = userJars.mkString(File.pathSeparator)
 
     val printReplOutput = properties.getProperty("zeppelin.spark.printREPLOutput", "true").toBoolean
     val replOut = if (printReplOutput) {
@@ -122,6 +128,9 @@ class SparkScala211Interpreter(override val conf: SparkConf,
   def scalaInterpret(code: String): scala.tools.nsc.interpreter.IR.Result =
     sparkILoop.interpret(code)
 
+  override def getScalaShellClassLoader: ClassLoader = {
+    sparkILoop.classLoader
+  }
 }
 
 private object SparkScala211Interpreter {
@@ -191,4 +200,5 @@ private object SparkScala211Interpreter {
 
     loopPostInit()
   }
+
 }

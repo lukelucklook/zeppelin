@@ -54,6 +54,15 @@ function NotebookCtrl($scope, $route, $routeParams, $location, $rootScope,
     return moment.unix(date).format('MMMM Do YYYY, h:mm a');
   };
 
+  // reorder this array without Head revision, put Head revision in the first
+  $scope.revisionSort = function(array) {
+    let orderArr = array.slice(1).sort((a, b) => {
+      return b.time-a.time;
+    });
+    orderArr.unshift(array[0]);
+    return orderArr;
+  };
+
   $scope.interpreterSettings = [];
   $scope.interpreterBindings = [];
   $scope.isNoteDirty = null;
@@ -249,7 +258,7 @@ function NotebookCtrl($scope, $route, $routeParams, $location, $rootScope,
   });
 
   $scope.exportNote = function() {
-    let jsonContent = JSON.stringify($scope.note);
+    let jsonContent = JSON.stringify($scope.note, null, 2);
     if (jsonContent.length > limit) {
       BootstrapDialog.confirm({
         closable: true,
@@ -257,18 +266,23 @@ function NotebookCtrl($scope, $route, $routeParams, $location, $rootScope,
         message: 'Do you still want to export this note?',
         callback: function(result) {
           if (result) {
-            saveAsService.saveAs(jsonContent, $scope.note.name, 'json');
+            saveAsService.saveAs(jsonContent, $scope.note.name, 'zpln');
           }
         },
       });
     } else {
-      saveAsService.saveAs(jsonContent, $scope.note.name, 'json');
+      saveAsService.saveAs(jsonContent, $scope.note.name, 'zpln');
     }
   };
 
   // Export nbformat
   $scope.exportNbformat = function() {
-    websocketMsgSrv.convertNote($scope.note, $scope.note.name);
+    websocketMsgSrv.convertNote($scope.note.id, $scope.note.name);
+  };
+
+  // Export nbformat
+  $scope.reloadNote = function() {
+    websocketMsgSrv.reloadNote($scope.note.id);
   };
 
   // Clone note
@@ -332,6 +346,7 @@ function NotebookCtrl($scope, $route, $routeParams, $location, $rootScope,
         $scope.noteRevisions.splice(0, 0, {
           id: 'Head',
           message: 'Head',
+          time: $scope.noteRevisions[0].time,
         });
       }
       if ($routeParams.revisionId) {
@@ -509,12 +524,6 @@ function NotebookCtrl($scope, $route, $routeParams, $location, $rootScope,
       $scope.note.config.cronExecutingRoles = '';
     }
     $scope.note.config.cron = cronExpr;
-    $scope.setConfig();
-  };
-
-  /** Set release resource for this note **/
-  $scope.setReleaseResource = function(value) {
-    $scope.note.config.releaseresource = value;
     $scope.setConfig();
   };
 
@@ -1251,11 +1260,11 @@ function NotebookCtrl($scope, $route, $routeParams, $location, $rootScope,
   };
 
   const isSettingDirty = function() {
-    // if (angular.equals($scope.interpreterBindings, $scope.interpreterBindingsOrig)) {
-    //   return false;
-    // } else {
-    return false;
-    // }
+    if (angular.equals($scope.interpreterBindings, $scope.interpreterBindingsOrig)) {
+      return false;
+    } else {
+      return true;
+    }
   };
 
   const isPermissionsDirty = function() {

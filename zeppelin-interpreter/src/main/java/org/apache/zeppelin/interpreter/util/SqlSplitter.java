@@ -19,7 +19,10 @@
 package org.apache.zeppelin.interpreter.util;
 
 
+import org.apache.commons.lang3.StringUtils;
+
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -56,8 +59,24 @@ public class SqlSplitter {
     }
   }
 
+  /**
+   * Split whole text into multiple sql statements.
+   * Two Steps:
+   *   Step 1, split the whole text into multiple sql statements.
+   *   Step 2, refine the results. Replace the preceding sql statements with empty lines, so that
+   *           we can get the correct line number in the parsing error message.
+   *
+   *  e.g.
+   *  select a from table_1;
+   *  select a from table_2;
+   *  The above text will be splitted into:
+   *  sql_1: select a from table_1
+   *  sql_2: \nselect a from table_2
+   *
+   * @param text
+   * @return
+   */
   public List<String> splitSql(String text) {
-    text = text.trim();
     List<String> queries = new ArrayList<>();
     StringBuilder query = new StringBuilder();
     char character;
@@ -73,17 +92,14 @@ public class SqlSplitter {
       // end of single line comment
       if (singleLineComment && (character == '\n')) {
         singleLineComment = false;
-        if (query.toString().trim().isEmpty()) {
-          continue;
-        }
+        query.append(character);
+        continue;
       }
 
       // end of multiple line comment
-      if (multiLineComment && character == '/' && text.charAt(index - 1) == '*') {
+      if (multiLineComment && (index - 1) >= 0 && text.charAt(index - 1) == '/'
+              && (index - 2) >= 0 && text.charAt(index - 2) == '*') {
         multiLineComment = false;
-        if (query.toString().trim().isEmpty()) {
-          continue;
-        }
       }
 
       if (character == '\'') {
@@ -106,43 +122,74 @@ public class SqlSplitter {
               && text.length() > (index + 1)) {
         if (isSingleLineComment(text.charAt(index), text.charAt(index + 1))) {
           singleLineComment = true;
-        } else if (text.charAt(index) == '/' && text.charAt(index + 1) == '*') {
+        } else if (text.charAt(index) == '/' && text.length() > (index + 2)
+                && text.charAt(index + 1) == '*' && text.charAt(index + 2) != '+') {
           multiLineComment = true;
         }
       }
 
-      if (character == ';' && !singleQuoteString && !doubleQuoteString && !multiLineComment
-              && !singleLineComment) {
-        // meet semicolon
-        queries.add(query.toString().trim());
-        query = new StringBuilder();
+      if (character == ';' && !singleQuoteString && !doubleQuoteString && !multiLineComment && !singleLineComment) {
+        // meet the end of semicolon
+        if (!query.toString().trim().isEmpty()) {
+          queries.add(query.toString());
+          query = new StringBuilder();
+        }
       } else if (index == (text.length() - 1)) {
         // meet the last character
-        if (!singleLineComment && !multiLineComment) {
+        if ((!singleLineComment && !multiLineComment)) {
           query.append(character);
-          queries.add(query.toString().trim());
+        }
+
+        if (!query.toString().trim().isEmpty()) {
+          queries.add(query.toString());
+          query = new StringBuilder();
         }
       } else if (!singleLineComment && !multiLineComment) {
         // normal case, not in single line comment and not in multiple line comment
         query.append(character);
-      } else if (singleLineComment && !query.toString().trim().isEmpty()) {
-        // in single line comment, only add it to query when the single line comment is
-        // in the middle of sql statement
-        // e.g.
-        // select a -- comment
-        // from table_1
-        query.append(character);
-      } else if (multiLineComment && !query.toString().trim().isEmpty()) {
-        // in multiple line comment, only add it to query when the multiple line comment
-        // is in the middle of sql statement.
-        // e.g.
-        // select a /* comment */
-        // from table_1
+      } else if (character == '\n') {
         query.append(character);
       }
     }
 
-    return queries;
+    List<String> refinedQueries = new ArrayList<>();
+    for (int i = 0; i < queries.size(); ++i) {
+      String emptyLine = "";
+      if (i > 0) {
+        emptyLine = createEmptyLine(refinedQueries.get(i-1));
+      }
+      if (isSingleLineComment(queries.get(i)) || isMultipleLineComment(queries.get(i))) {
+        // refine the last refinedQuery
+        if (refinedQueries.size() > 0) {
+          String lastRefinedQuery = refinedQueries.get(refinedQueries.size() - 1);
+          refinedQueries.set(refinedQueries.size() - 1,
+                  lastRefinedQuery + createEmptyLine(queries.get(i)));
+        }
+      } else {
+        String refinedQuery = emptyLine + queries.get(i);
+        refinedQueries.add(refinedQuery);
+      }
+    }
+
+    return refinedQueries;
+  }
+
+  private boolean isSingleLineComment(String text) {
+    return text.trim().startsWith("--");
+  }
+
+  private boolean isMultipleLineComment(String text) {
+    return text.trim().startsWith("/*") && text.trim().endsWith("*/");
+  }
+
+  private String createEmptyLine(String text) {
+    StringBuilder builder = new StringBuilder();
+    for (int i = 0; i < text.length(); ++i) {
+      if (text.charAt(i) == '\n') {
+        builder.append('\n');
+      }
+    }
+    return builder.toString();
   }
 
   private boolean isSingleLineComment(char curChar, char nextChar) {

@@ -69,16 +69,16 @@ public class SparkInterpreterTest {
   @Test
   public void testSparkInterpreter() throws IOException, InterruptedException, InterpreterException {
     Properties properties = new Properties();
-    properties.setProperty("spark.master", "local");
-    properties.setProperty("spark.app.name", "test");
+    properties.setProperty(SparkStringConstants.MASTER_PROP_NAME, "local");
+    properties.setProperty(SparkStringConstants.APP_NAME_PROP_NAME, "test");
     properties.setProperty("zeppelin.spark.maxResult", "100");
-    properties.setProperty("zeppelin.spark.uiWebUrl", "fake_spark_weburl");
+    properties.setProperty("zeppelin.spark.uiWebUrl", "fake_spark_weburl/{{applicationId}}");
     // disable color output for easy testing
     properties.setProperty("zeppelin.spark.scala.color", "false");
     properties.setProperty("zeppelin.spark.deprecatedMsg.show", "false");
 
     InterpreterContext context = InterpreterContext.builder()
-        .setInterpreterOut(new InterpreterOutput(null))
+        .setInterpreterOut(new InterpreterOutput())
         .setIntpEventClient(mockRemoteEventClient)
         .setAngularObjectRegistry(new AngularObjectRegistry("spark", null))
         .build();
@@ -136,6 +136,11 @@ public class SparkInterpreterTest {
     result = interpreter.interpret("/*line 1 \n line 2*/print(\"hello world\")", getInterpreterContext());
     assertEquals(InterpreterResult.Code.SUCCESS, result.code());
 
+    // test $intp, only works for scala after 2.11
+    if (!interpreter.isScala210()) {
+      result = interpreter.interpret("$intp", getInterpreterContext());
+      assertEquals(InterpreterResult.Code.SUCCESS, result.code());
+    }
 
     // Companion object with case class
     result = interpreter.interpret("import scala.math._\n" +
@@ -180,7 +185,8 @@ public class SparkInterpreterTest {
     // spark job url is sent
     ArgumentCaptor<Map> onParaInfosReceivedArg = ArgumentCaptor.forClass(Map.class);
     verify(mockRemoteEventClient).onParaInfosReceived(onParaInfosReceivedArg.capture());
-    assertTrue(((String) onParaInfosReceivedArg.getValue().get("jobUrl")).startsWith("fake_spark_weburl"));
+    assertTrue(((String) onParaInfosReceivedArg.getValue().get("jobUrl")).startsWith("fake_spark_weburl/"
+            + interpreter.getJavaSparkContext().sc().applicationId()));
 
     // case class
     result = interpreter.interpret("val bankText = sc.textFile(\"bank.csv\")", getInterpreterContext());
@@ -393,8 +399,8 @@ public class SparkInterpreterTest {
   @Test
   public void testDisableReplOutput() throws InterpreterException {
     Properties properties = new Properties();
-    properties.setProperty("spark.master", "local");
-    properties.setProperty("spark.app.name", "test");
+    properties.setProperty(SparkStringConstants.MASTER_PROP_NAME, "local");
+    properties.setProperty(SparkStringConstants.APP_NAME_PROP_NAME, "test");
     properties.setProperty("zeppelin.spark.maxResult", "100");
     properties.setProperty("zeppelin.spark.printREPLOutput", "false");
     // disable color output for easy testing
@@ -418,10 +424,54 @@ public class SparkInterpreterTest {
   }
 
   @Test
-  public void testSchedulePool() throws InterpreterException {
+  public void testDisableReplOutputForParagraph() throws InterpreterException {
     Properties properties = new Properties();
     properties.setProperty("spark.master", "local");
     properties.setProperty("spark.app.name", "test");
+    properties.setProperty("zeppelin.spark.maxResult", "100");
+    properties.setProperty("zeppelin.spark.printREPLOutput", "true");
+    // disable color output for easy testing
+    properties.setProperty("zeppelin.spark.scala.color", "false");
+    properties.setProperty("zeppelin.spark.deprecatedMsg.show", "false");
+
+    InterpreterContext.set(getInterpreterContext());
+    interpreter = new SparkInterpreter(properties);
+    interpreter.setInterpreterGroup(mock(InterpreterGroup.class));
+    interpreter.open();
+
+    InterpreterResult result = interpreter.interpret("val a=\"hello world\"", getInterpreterContext());
+    assertEquals(InterpreterResult.Code.SUCCESS, result.code());
+    assertEquals("a: String = hello world\n", output);
+
+    result = interpreter.interpret("print(a)", getInterpreterContext());
+    assertEquals(InterpreterResult.Code.SUCCESS, result.code());
+    // output from print statement will still be displayed
+    assertEquals("hello world", output);
+
+    // disable REPL output
+    InterpreterContext context = getInterpreterContext();
+    context.getLocalProperties().put("printREPLOutput", "false");
+    result = interpreter.interpret("print(a)", context);
+    assertEquals(InterpreterResult.Code.SUCCESS, result.code());
+    // output from print statement will disappear
+    assertEquals("", output);
+
+    // REPL output get back if we don't set printREPLOutput in paragraph local properties
+    result = interpreter.interpret("val a=\"hello world\"", getInterpreterContext());
+    assertEquals(InterpreterResult.Code.SUCCESS, result.code());
+    assertEquals("a: String = hello world\n", output);
+
+    result = interpreter.interpret("print(a)", getInterpreterContext());
+    assertEquals(InterpreterResult.Code.SUCCESS, result.code());
+    // output from print statement will still be displayed
+    assertEquals("hello world", output);
+  }
+
+  @Test
+  public void testSchedulePool() throws InterpreterException {
+    Properties properties = new Properties();
+    properties.setProperty(SparkStringConstants.MASTER_PROP_NAME, "local");
+    properties.setProperty(SparkStringConstants.APP_NAME_PROP_NAME, "test");
     properties.setProperty("zeppelin.spark.maxResult", "100");
     properties.setProperty("spark.scheduler.mode", "FAIR");
     // disable color output for easy testing
@@ -449,8 +499,8 @@ public class SparkInterpreterTest {
   @Test
   public void testDisableSparkUI_1() throws InterpreterException {
     Properties properties = new Properties();
-    properties.setProperty("spark.master", "local");
-    properties.setProperty("spark.app.name", "test");
+    properties.setProperty(SparkStringConstants.MASTER_PROP_NAME, "local");
+    properties.setProperty(SparkStringConstants.APP_NAME_PROP_NAME, "test");
     properties.setProperty("zeppelin.spark.maxResult", "100");
     properties.setProperty("spark.ui.enabled", "false");
     // disable color output for easy testing
@@ -474,8 +524,8 @@ public class SparkInterpreterTest {
   @Test
   public void testDisableSparkUI_2() throws InterpreterException {
     Properties properties = new Properties();
-    properties.setProperty("spark.master", "local");
-    properties.setProperty("spark.app.name", "test");
+    properties.setProperty(SparkStringConstants.MASTER_PROP_NAME, "local");
+    properties.setProperty(SparkStringConstants.APP_NAME_PROP_NAME, "test");
     properties.setProperty("zeppelin.spark.maxResult", "100");
     properties.setProperty("zeppelin.spark.ui.hidden", "true");
     // disable color output for easy testing
@@ -498,8 +548,8 @@ public class SparkInterpreterTest {
   @Test
   public void testScopedMode() throws InterpreterException {
     Properties properties = new Properties();
-    properties.setProperty("spark.master", "local");
-    properties.setProperty("spark.app.name", "test");
+    properties.setProperty(SparkStringConstants.MASTER_PROP_NAME, "local");
+    properties.setProperty(SparkStringConstants.APP_NAME_PROP_NAME, "test");
     properties.setProperty("zeppelin.spark.maxResult", "100");
     // disable color output for easy testing
     properties.setProperty("zeppelin.spark.scala.color", "false");
@@ -546,7 +596,7 @@ public class SparkInterpreterTest {
   private InterpreterContext getInterpreterContext() {
     output = "";
     InterpreterContext context = InterpreterContext.builder()
-        .setInterpreterOut(new InterpreterOutput(null))
+        .setInterpreterOut(new InterpreterOutput())
         .setIntpEventClient(mockRemoteEventClient)
         .setAngularObjectRegistry(new AngularObjectRegistry("spark", null))
         .build();

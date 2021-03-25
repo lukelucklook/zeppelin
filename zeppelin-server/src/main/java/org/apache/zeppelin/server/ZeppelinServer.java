@@ -16,26 +16,53 @@
  */
 package org.apache.zeppelin.server;
 
+import com.codahale.metrics.servlets.HealthCheckServlet;
+import com.codahale.metrics.servlets.PingServlet;
+import com.google.gson.Gson;
+
+import static org.apache.zeppelin.server.HtmlAddonResource.HTML_ADDON_IDENTIFIER;
+
+import io.micrometer.core.instrument.Clock;
+import io.micrometer.core.instrument.Metrics;
+import io.micrometer.core.instrument.Tags;
+import io.micrometer.core.instrument.binder.jetty.InstrumentedQueuedThreadPool;
+import io.micrometer.core.instrument.binder.jetty.JettyConnectionMetrics;
+import io.micrometer.core.instrument.binder.jetty.JettySslHandshakeMetrics;
+import io.micrometer.core.instrument.binder.jetty.TimedHandler;
+import io.micrometer.core.instrument.binder.jvm.ClassLoaderMetrics;
+import io.micrometer.core.instrument.binder.jvm.JvmMemoryMetrics;
+import io.micrometer.core.instrument.binder.jvm.JvmThreadMetrics;
+import io.micrometer.core.instrument.binder.system.FileDescriptorMetrics;
+import io.micrometer.core.instrument.binder.system.ProcessorMetrics;
+import io.micrometer.core.instrument.binder.system.UptimeMetrics;
+import io.micrometer.jmx.JmxConfig;
+import io.micrometer.jmx.JmxMeterRegistry;
+import io.micrometer.prometheus.PrometheusConfig;
+import io.micrometer.prometheus.PrometheusMeterRegistry;
+
 import java.io.File;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
+import java.nio.file.Files;
+import java.security.GeneralSecurityException;
+import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.EnumSet;
-import java.util.Objects;
-import java.util.stream.Stream;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import javax.management.remote.JMXServiceURL;
 import javax.servlet.DispatcherType;
 import javax.servlet.ServletContextEvent;
 import javax.servlet.ServletContextListener;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.shiro.web.env.EnvironmentLoaderListener;
 import org.apache.shiro.web.servlet.ShiroFilter;
 import org.apache.zeppelin.cluster.ClusterManagerServer;
 import org.apache.zeppelin.conf.ZeppelinConfiguration;
 import org.apache.zeppelin.conf.ZeppelinConfiguration.ConfVars;
 import org.apache.zeppelin.display.AngularObjectRegistryListener;
+import org.apache.zeppelin.healthcheck.HealthChecks;
 import org.apache.zeppelin.helium.ApplicationEventListener;
 import org.apache.zeppelin.helium.Helium;
 import org.apache.zeppelin.helium.HeliumApplicationFactory;
@@ -46,9 +73,13 @@ import org.apache.zeppelin.interpreter.InterpreterSetting;
 import org.apache.zeppelin.interpreter.InterpreterSettingManager;
 import org.apache.zeppelin.interpreter.recovery.RecoveryStorage;
 import org.apache.zeppelin.interpreter.remote.RemoteInterpreterProcessListener;
+import org.apache.zeppelin.metric.JVMInfoBinder;
+import org.apache.zeppelin.metric.PrometheusServlet;
 import org.apache.zeppelin.notebook.NoteEventListener;
+import org.apache.zeppelin.notebook.NoteManager;
 import org.apache.zeppelin.notebook.Notebook;
 import org.apache.zeppelin.notebook.AuthorizationService;
+import org.apache.zeppelin.notebook.Paragraph;
 import org.apache.zeppelin.notebook.repo.NotebookRepo;
 import org.apache.zeppelin.notebook.repo.NotebookRepoSync;
 import org.apache.zeppelin.notebook.scheduler.NoSchedulerService;
@@ -57,12 +88,17 @@ import org.apache.zeppelin.notebook.scheduler.SchedulerService;
 import org.apache.zeppelin.plugin.PluginManager;
 import org.apache.zeppelin.rest.exception.WebApplicationExceptionMapper;
 import org.apache.zeppelin.search.LuceneSearch;
+import org.apache.zeppelin.search.NoSearchService;
 import org.apache.zeppelin.search.SearchService;
 import org.apache.zeppelin.service.*;
 import org.apache.zeppelin.service.AuthenticationService;
+import org.apache.zeppelin.socket.ConnectionManager;
 import org.apache.zeppelin.socket.NotebookServer;
+import org.apache.zeppelin.user.AuthenticationInfo;
 import org.apache.zeppelin.user.Credentials;
 import org.apache.zeppelin.util.ReflectionUtils;
+import org.apache.zeppelin.utils.PEMImporter;
+import org.eclipse.jetty.http.HttpScheme;
 import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.jmx.ConnectorServer;
 import org.eclipse.jetty.jmx.MBeanContainer;
@@ -77,11 +113,9 @@ import org.eclipse.jetty.server.handler.ContextHandlerCollection;
 import org.eclipse.jetty.server.session.SessionHandler;
 import org.eclipse.jetty.servlet.DefaultServlet;
 import org.eclipse.jetty.servlet.FilterHolder;
-import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
+import org.eclipse.jetty.util.resource.Resource;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
-import org.eclipse.jetty.util.thread.QueuedThreadPool;
-import org.eclipse.jetty.util.thread.ThreadPool;
 import org.eclipse.jetty.webapp.WebAppContext;
 import org.eclipse.jetty.websocket.servlet.WebSocketServlet;
 import org.glassfish.hk2.api.Immediate;
@@ -102,23 +136,33 @@ public class ZeppelinServer extends ResourceConfig {
   public static Server jettyWebServer;
   public static ServiceLocator sharedServiceLocator;
 
-  private static ZeppelinConfiguration conf = ZeppelinConfiguration.create();
+  private static ZeppelinConfiguration conf;
+  private static PrometheusMeterRegistry promMetricRegistry;
+
+  public static void reset() {
+    conf = null;
+    jettyWebServer = null;
+    sharedServiceLocator = null;
+  }
 
   @Inject
   public ZeppelinServer() {
-    InterpreterOutput.limit = conf.getInt(ConfVars.ZEPPELIN_INTERPRETER_OUTPUT_LIMIT);
+    InterpreterOutput.LIMIT = conf.getInt(ConfVars.ZEPPELIN_INTERPRETER_OUTPUT_LIMIT);
 
     packages("org.apache.zeppelin.rest");
   }
 
-  public static void main(String[] args) throws InterruptedException {
-    final ZeppelinConfiguration conf = ZeppelinConfiguration.create();
-    conf.setProperty("args", args);
+  public static void main(String[] args) throws InterruptedException, IOException {
+    ZeppelinServer.conf = ZeppelinConfiguration.create();
 
     jettyWebServer = setupJettyServer(conf);
+    initMetrics(conf);
+
+    TimedHandler timedHandler = new TimedHandler(Metrics.globalRegistry, Tags.empty());
+    jettyWebServer.setHandler(timedHandler);
 
     ContextHandlerCollection contexts = new ContextHandlerCollection();
-    jettyWebServer.setHandler(contexts);
+    timedHandler.setHandler(contexts);
 
     sharedServiceLocator = ServiceLocatorFactory.getInstance().create("shared-locator");
     ServiceLocatorUtilities.enableImmediateScope(sharedServiceLocator);
@@ -132,15 +176,9 @@ public class ZeppelinServer extends ResourceConfig {
         new AbstractBinder() {
           @Override
           protected void configure() {
-            Credentials credentials =
-                new Credentials(
-                    conf.credentialsPersist(),
-                    conf.getCredentialsPath(),
-                    conf.getCredentialsEncryptKey());
-
+            Credentials credentials = new Credentials(conf);
             bindAsContract(InterpreterFactory.class).in(Singleton.class);
             bindAsContract(NotebookRepoSync.class).to(NotebookRepo.class).in(Immediate.class);
-            bind(LuceneSearch.class).to(SearchService.class).in(Singleton.class);
             bindAsContract(Helium.class).in(Singleton.class);
             bind(conf).to(ZeppelinConfiguration.class);
             bindAsContract(InterpreterSettingManager.class).in(Singleton.class);
@@ -149,7 +187,9 @@ public class ZeppelinServer extends ResourceConfig {
             bindAsContract(GsonProvider.class).in(Singleton.class);
             bindAsContract(WebApplicationExceptionMapper.class).in(Singleton.class);
             bindAsContract(AdminService.class).in(Singleton.class);
-            bindAsContract(AuthorizationService.class).to(Singleton.class);
+            bindAsContract(AuthorizationService.class).in(Singleton.class);
+            bindAsContract(ConnectionManager.class).in(Singleton.class);
+            bindAsContract(NoteManager.class).in(Singleton.class);
             // TODO(jl): Will make it more beautiful
             if (!StringUtils.isBlank(conf.getShiroPath())) {
               bind(ShiroAuthenticationService.class).to(AuthenticationService.class).in(Singleton.class);
@@ -175,6 +215,11 @@ public class ZeppelinServer extends ResourceConfig {
             } else {
               bind(NoSchedulerService.class).to(SchedulerService.class).in(Singleton.class);
             }
+            if (conf.getBoolean(ConfVars.ZEPPELIN_SEARCH_ENABLE)) {
+              bind(LuceneSearch.class).to(SearchService.class).in(Singleton.class);
+            } else {
+              bind(NoSearchService.class).to(SearchService.class).in(Singleton.class);
+            }
           }
         });
 
@@ -188,49 +233,20 @@ public class ZeppelinServer extends ResourceConfig {
     setupClusterManagerServer(sharedServiceLocator);
 
     // JMX Enable
-    Stream.of("ZEPPELIN_JMX_ENABLE")
-        .map(System::getenv)
-        .map(Boolean::parseBoolean)
-        .filter(Boolean::booleanValue)
-        .map(jmxEnabled -> "ZEPPELIN_JMX_PORT")
-        .map(System::getenv)
-        .map(
-            portString -> {
-              try {
-                return Integer.parseInt(portString);
-              } catch (Exception e) {
-                return null;
-              }
-            })
-        .filter(Objects::nonNull)
-        .forEach(
-            port -> {
-              try {
-                MBeanContainer mbeanContainer =
-                    new MBeanContainer(ManagementFactory.getPlatformMBeanServer());
-                jettyWebServer.addEventListener(mbeanContainer);
-                jettyWebServer.addBean(mbeanContainer);
-
-                JMXServiceURL jmxURL =
-                    new JMXServiceURL(
-                        String.format(
-                            "service:jmx:rmi://0.0.0.0:%d/jndi/rmi://0.0.0.0:%d/jmxrmi",
-                            port, port));
-                ConnectorServer jmxServer =
-                    new ConnectorServer(jmxURL, "org.eclipse.jetty.jmx:name=rmiconnectorserver");
-                jettyWebServer.addBean(jmxServer);
-
-                // Add JMX Beans
-                // TODO(jl): Need to investigate more about injection and jmx
-                jettyWebServer.addBean(
-                    sharedServiceLocator.getService(InterpreterSettingManager.class));
-                jettyWebServer.addBean(sharedServiceLocator.getService(NotebookServer.class));
-
-                LOG.info("JMX Enabled with port: {}", port);
-              } catch (Exception e) {
-                LOG.warn("Error while setting JMX", e);
-              }
-            });
+    if (conf.isJMXEnabled()) {
+      int port = conf.getJMXPort();
+      // Setup JMX
+      MBeanContainer mbeanContainer = new MBeanContainer(ManagementFactory.getPlatformMBeanServer());
+      jettyWebServer.addBean(mbeanContainer);
+      JMXServiceURL jmxURL =
+        new JMXServiceURL(
+            String.format(
+                "service:jmx:rmi://0.0.0.0:%d/jndi/rmi://0.0.0.0:%d/jmxrmi",
+                port, port));
+      ConnectorServer jmxServer = new ConnectorServer(jmxURL, "org.eclipse.jetty.jmx:name=rmiconnectorserver");
+      jettyWebServer.addBean(jmxServer);
+      LOG.info("JMX Enabled with port: {}", port);
+    }
 
     LOG.info("Starting zeppelin server");
     try {
@@ -248,23 +264,17 @@ public class ZeppelinServer extends ResourceConfig {
     }
     LOG.info("Done, zeppelin server started");
 
-    Runtime.getRuntime()
-        .addShutdownHook(
-            new Thread(
-                () -> {
-                  LOG.info("Shutting down Zeppelin Server ... ");
-                  try {
-                    jettyWebServer.stop();
-                    if (!conf.isRecoveryEnabled()) {
-                      sharedServiceLocator.getService(InterpreterSettingManager.class).close();
-                    }
-                    sharedServiceLocator.getService(Notebook.class).close();
-                    Thread.sleep(3000);
-                  } catch (Exception e) {
-                    LOG.error("Error while stopping servlet container", e);
-                  }
-                  LOG.info("Bye");
-                }));
+    runNoteOnStart(conf);
+
+    Runtime.getRuntime().addShutdownHook(shutdown(conf));
+
+    // Try to get Notebook from ServiceLocator, because Notebook instantiation is lazy, it is
+    // created when user open zeppelin in browser if we don't get it explicitly here.
+    // Lazy loading will cause paragraph recovery and cron job initialization is delayed.
+    Notebook notebook = ServiceLocatorUtilities.getService(
+            sharedServiceLocator, Notebook.class.getName());
+    // Try to recover here, don't do it in constructor of Notebook, because it would cause deadlock.
+    notebook.recoveryIfNecessary();
 
     // when zeppelin is started inside of ide (especially for eclipse)
     // for graceful shutdown, input any key in console window
@@ -283,9 +293,49 @@ public class ZeppelinServer extends ResourceConfig {
     }
   }
 
+  private static void initMetrics(ZeppelinConfiguration conf) {
+    if (conf.isPrometheusMetricEnabled()) {
+      promMetricRegistry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+      Metrics.addRegistry(promMetricRegistry);
+    }
+    if (conf.isJMXEnabled()) {
+      Metrics.addRegistry(new JmxMeterRegistry(JmxConfig.DEFAULT, Clock.SYSTEM));
+    }
+    new ClassLoaderMetrics().bindTo(Metrics.globalRegistry);
+    new JvmMemoryMetrics().bindTo(Metrics.globalRegistry);
+    new JvmThreadMetrics().bindTo(Metrics.globalRegistry);
+    new FileDescriptorMetrics().bindTo(Metrics.globalRegistry);
+    new ProcessorMetrics().bindTo(Metrics.globalRegistry);
+    new UptimeMetrics().bindTo(Metrics.globalRegistry);
+    new JVMInfoBinder().bindTo(Metrics.globalRegistry);
+  }
+
+  private static Thread shutdown(ZeppelinConfiguration conf) {
+    return new Thread(
+            () -> {
+              LOG.info("Shutting down Zeppelin Server ... ");
+              try {
+                if (jettyWebServer != null) {
+                  jettyWebServer.stop();
+                }
+                if (sharedServiceLocator != null) {
+                  if (!conf.isRecoveryEnabled()) {
+                    sharedServiceLocator.getService(InterpreterSettingManager.class).close();
+                  }
+                  sharedServiceLocator.getService(Notebook.class).close();
+                }
+                Thread.sleep(3000);
+              } catch (Exception e) {
+                LOG.error("Error while stopping servlet container", e);
+              }
+              LOG.info("Bye");
+            });
+  }
+
   private static Server setupJettyServer(ZeppelinConfiguration conf) {
-    ThreadPool threadPool =
-      new QueuedThreadPool(conf.getInt(ConfVars.ZEPPELIN_SERVER_JETTY_THREAD_POOL_MAX),
+    InstrumentedQueuedThreadPool threadPool =
+      new InstrumentedQueuedThreadPool(Metrics.globalRegistry, Tags.empty(),
+                           conf.getInt(ConfVars.ZEPPELIN_SERVER_JETTY_THREAD_POOL_MAX),
                            conf.getInt(ConfVars.ZEPPELIN_SERVER_JETTY_THREAD_POOL_MIN),
                            conf.getInt(ConfVars.ZEPPELIN_SERVER_JETTY_THREAD_POOL_TIMEOUT));
     final Server server = new Server(threadPool);
@@ -297,41 +347,80 @@ public class ZeppelinServer extends ResourceConfig {
     ServerConnector connector;
     HttpConfiguration httpConfig = new HttpConfiguration();
     httpConfig.addCustomizer(new ForwardedRequestCustomizer());
+    httpConfig.setSendServerVersion(conf.sendJettyName());
+    httpConfig.setRequestHeaderSize(conf.getJettyRequestHeaderSize());
     if (conf.useSsl()) {
-      LOG.debug("Enabling SSL for Zeppelin Server on port " + sslPort);
-      httpConfig.setSecureScheme("https");
+      LOG.debug("Enabling SSL for Zeppelin Server on port {}", sslPort);
+      httpConfig.setSecureScheme(HttpScheme.HTTPS.asString());
       httpConfig.setSecurePort(sslPort);
-      httpConfig.setOutputBufferSize(32768);
-      httpConfig.setResponseHeaderSize(8192);
-      httpConfig.setSendServerVersion(true);
 
       HttpConfiguration httpsConfig = new HttpConfiguration(httpConfig);
-      SecureRequestCustomizer src = new SecureRequestCustomizer();
-      httpsConfig.addCustomizer(src);
+      httpsConfig.addCustomizer(new SecureRequestCustomizer());
 
+      SslConnectionFactory sslConnectionFactory = new SslConnectionFactory(getSslContextFactory(conf), HttpVersion.HTTP_1_1.asString());
+      HttpConnectionFactory httpsConnectionFactory = new HttpConnectionFactory(httpsConfig);
       connector =
               new ServerConnector(
                       server,
-                      new SslConnectionFactory(getSslContextFactory(conf), HttpVersion.HTTP_1_1.asString()),
-                      new HttpConnectionFactory(httpsConfig));
+                      sslConnectionFactory,
+                      httpsConnectionFactory);
+      connector.setPort(sslPort);
+      connector.addBean(new JettySslHandshakeMetrics(Metrics.globalRegistry, Tags.empty()));
     } else {
-      connector = new ServerConnector(server, new HttpConnectionFactory(httpConfig));
+      HttpConnectionFactory httpConnectionFactory = new HttpConnectionFactory(httpConfig);
+      connector =
+              new ServerConnector(
+                      server,
+                      httpConnectionFactory);
       connector.setPort(port);
     }
-    configureRequestHeaderSize(conf, connector);
     // Set some timeout options to make debugging easier.
     int timeout = 1000 * 30;
     connector.setIdleTimeout(timeout);
     connector.setHost(conf.getServerAddress());
+    connector.addBean(new JettyConnectionMetrics(Metrics.globalRegistry, Tags.empty()));
     server.addConnector(connector);
   }
 
-  private static void configureRequestHeaderSize(
-      ZeppelinConfiguration conf, ServerConnector connector) {
-    HttpConnectionFactory cf =
-        (HttpConnectionFactory) connector.getConnectionFactory(HttpVersion.HTTP_1_1.toString());
-    int requestHeaderSize = conf.getJettyRequestHeaderSize();
-    cf.getHttpConfiguration().setRequestHeaderSize(requestHeaderSize);
+  private static void runNoteOnStart(ZeppelinConfiguration conf) throws IOException, InterruptedException {
+    String noteIdToRun = conf.getNotebookRunId();
+    if (!StringUtils.isEmpty(noteIdToRun)) {
+      LOG.info("Running note {} on start", noteIdToRun);
+      NotebookService notebookService = (NotebookService) ServiceLocatorUtilities.getService(
+              sharedServiceLocator, NotebookService.class.getName());
+
+      ServiceContext serviceContext;
+      String base64EncodedJsonSerializedServiceContext = conf.getNotebookRunServiceContext();
+      if (StringUtils.isEmpty(base64EncodedJsonSerializedServiceContext)) {
+        LOG.info("No service context provided. use ANONYMOUS");
+        serviceContext = new ServiceContext(AuthenticationInfo.ANONYMOUS, new HashSet<String>() {});
+      } else {
+        serviceContext = new Gson().fromJson(
+                new String(Base64.getDecoder().decode(base64EncodedJsonSerializedServiceContext)),
+                ServiceContext.class);
+      }
+
+      boolean success = notebookService.runAllParagraphs(noteIdToRun, null, serviceContext, new ServiceCallback<Paragraph>() {
+        @Override
+        public void onStart(String message, ServiceContext context) throws IOException {
+        }
+
+        @Override
+        public void onSuccess(Paragraph result, ServiceContext context) throws IOException {
+        }
+
+        @Override
+        public void onFailure(Exception ex, ServiceContext context) throws IOException {
+        }
+      });
+
+      if (conf.getNotebookRunAutoShutdown()) {
+        Thread t = shutdown(conf);
+        t.start();
+        t.join();
+        System.exit(success ? 0 : 1);
+      }
+    }
   }
 
   private static void setupNotebookServer(
@@ -346,7 +435,8 @@ public class ZeppelinServer extends ResourceConfig {
 
   private static void setupClusterManagerServer(ServiceLocator serviceLocator) {
     if (conf.isClusterMode()) {
-      ClusterManagerServer clusterManagerServer = ClusterManagerServer.getInstance();
+      LOG.info("Cluster mode is enabled, starting ClusterManagerServer");
+      ClusterManagerServer clusterManagerServer = ClusterManagerServer.getInstance(conf);
 
       NotebookServer notebookServer = serviceLocator.getService(NotebookServer.class);
       clusterManagerServer.addClusterEventListeners(ClusterManagerServer.CLUSTER_NOTE_EVENT_TOPIC, notebookServer);
@@ -373,28 +463,81 @@ public class ZeppelinServer extends ResourceConfig {
       }
 
       clusterManagerServer.start();
+    } else {
+      LOG.info("Cluster mode is disabled");
     }
   }
 
   private static SslContextFactory getSslContextFactory(ZeppelinConfiguration conf) {
-    SslContextFactory sslContextFactory = new SslContextFactory();
+    SslContextFactory.Server sslContextFactory = new SslContextFactory.Server();
 
-    // Set keystore
-    sslContextFactory.setKeyStorePath(conf.getKeyStorePath());
-    sslContextFactory.setKeyStoreType(conf.getKeyStoreType());
-    sslContextFactory.setKeyStorePassword(conf.getKeyStorePassword());
-    sslContextFactory.setKeyManagerPassword(conf.getKeyManagerPassword());
+    // initialize KeyStore
+    // Check for PEM files
+    if (StringUtils.isNoneBlank(conf.getPemKeyFile(), conf.getPemCertFile())) {
+      setupKeystoreWithPemFiles(sslContextFactory, conf);
+    } else {
+      // Set keystore
+      sslContextFactory.setKeyStorePath(conf.getKeyStorePath());
+      sslContextFactory.setKeyStoreType(conf.getKeyStoreType());
+      sslContextFactory.setKeyStorePassword(conf.getKeyStorePassword());
+      sslContextFactory.setKeyManagerPassword(conf.getKeyManagerPassword());
+    }
 
+    // initialize TrustStore
     if (conf.useClientAuth()) {
-      sslContextFactory.setNeedClientAuth(conf.useClientAuth());
-
-      // Set truststore
-      sslContextFactory.setTrustStorePath(conf.getTrustStorePath());
-      sslContextFactory.setTrustStoreType(conf.getTrustStoreType());
-      sslContextFactory.setTrustStorePassword(conf.getTrustStorePassword());
+      if (StringUtils.isNotBlank(conf.getPemCAFile())) {
+        setupTruststoreWithPemFiles(sslContextFactory, conf);
+      } else {
+        sslContextFactory.setNeedClientAuth(conf.useClientAuth());
+        // Set truststore
+        sslContextFactory.setTrustStorePath(conf.getTrustStorePath());
+        sslContextFactory.setTrustStoreType(conf.getTrustStoreType());
+        sslContextFactory.setTrustStorePassword(conf.getTrustStorePassword());
+      }
     }
 
     return sslContextFactory;
+  }
+
+  private static void setupKeystoreWithPemFiles(SslContextFactory.Server sslContextFactory, ZeppelinConfiguration conf) {
+    File pemKey = new File(conf.getPemKeyFile());
+    File pemCert = new File(conf.getPemCertFile());
+    boolean isPemKeyFileReadable = Files.isReadable(pemKey.toPath());
+    boolean isPemCertFileReadable = Files.isReadable(pemCert.toPath());
+    if (!isPemKeyFileReadable) {
+      LOG.warn("PEM key file {} is not readable", pemKey);
+    }
+    if (!isPemCertFileReadable) {
+      LOG.warn("PEM cert file {} is not readable", pemCert);
+    }
+    if (isPemKeyFileReadable && isPemCertFileReadable) {
+      try {
+        String password = conf.getPemKeyPassword();
+        sslContextFactory.setKeyStore(PEMImporter.loadKeyStore(pemCert, pemKey, password));
+        sslContextFactory.setKeyStoreType("JKS");
+        sslContextFactory.setKeyStorePassword(password);
+      } catch (IOException | GeneralSecurityException e) {
+        LOG.error("Failed to initialize KeyStore from PEM files", e);
+      }
+    } else {
+      LOG.error("Failed to read PEM files");
+    }
+  }
+
+  private static void setupTruststoreWithPemFiles(SslContextFactory.Server sslContextFactory, ZeppelinConfiguration conf) {
+    File pemCa = new File(conf.getPemCAFile());
+    if (Files.isReadable(pemCa.toPath())) {
+      try {
+        sslContextFactory.setTrustStore(PEMImporter.loadTrustStore(pemCa));
+        sslContextFactory.setTrustStoreType("JKS");
+        sslContextFactory.setTrustStorePassword("");
+        sslContextFactory.setNeedClientAuth(conf.useClientAuth());
+      } catch (IOException | GeneralSecurityException e) {
+        LOG.error("Failed to initialize TrustStore from PEM CA file", e);
+      }
+    } else {
+      LOG.error("PEM CA file {} is not readable", pemCa);
+    }
   }
 
   private static void setupRestApiContextHandler(WebAppContext webapp, ZeppelinConfiguration conf) {
@@ -417,6 +560,16 @@ public class ZeppelinServer extends ResourceConfig {
     }
   }
 
+  private static void setupPrometheusContextHandler(WebAppContext webapp) {
+    webapp.addServlet(new ServletHolder(new PrometheusServlet(promMetricRegistry)), "/metrics");
+  }
+
+  private static void setupHealthCheckContextHandler(WebAppContext webapp) {
+    webapp.addServlet(new ServletHolder(new HealthCheckServlet(HealthChecks.getHealthCheckReadinessRegistry())), "/health/readiness");
+    webapp.addServlet(new ServletHolder(new HealthCheckServlet(HealthChecks.getHealthCheckLivenessRegistry())), "/health/liveness");
+    webapp.addServlet(new ServletHolder(new PingServlet()), "/ping");
+  }
+
   private static WebAppContext setupWebAppContext(
       ContextHandlerCollection contexts, ZeppelinConfiguration conf, String warPath, String contextPath) {
     WebAppContext webApp = new WebAppContext();
@@ -432,13 +585,13 @@ public class ZeppelinServer extends ResourceConfig {
       // use packaged WAR
       webApp.setWar(warFile.getAbsolutePath());
       webApp.setExtractWAR(false);
-      File warTempDirectory = new File(conf.getRelativeDir(ConfVars.ZEPPELIN_WAR_TEMPDIR) + contextPath);
+      File warTempDirectory = new File(conf.getAbsoluteDir(ConfVars.ZEPPELIN_WAR_TEMPDIR) + contextPath);
       warTempDirectory.mkdir();
       LOG.info("ZeppelinServer Webapp path: {}", warTempDirectory.getPath());
       webApp.setTempDirectory(warTempDirectory);
     }
     // Explicit bind to root
-    webApp.addServlet(new ServletHolder(new DefaultServlet()), "/*");
+    webApp.addServlet(new ServletHolder(setupServlet(webApp, conf)), "/*");
     contexts.addHandler(webApp);
 
     webApp.addFilter(new FilterHolder(CorsFilter.class), "/*", EnumSet.allOf(DispatcherType.class));
@@ -447,6 +600,44 @@ public class ZeppelinServer extends ResourceConfig {
         "org.eclipse.jetty.servlet.Default.dirAllowed",
         Boolean.toString(conf.getBoolean(ConfVars.ZEPPELIN_SERVER_DEFAULT_DIR_ALLOWED)));
     return webApp;
+  }
+
+  private static DefaultServlet setupServlet(
+      WebAppContext webApp,
+      ZeppelinConfiguration conf) {
+
+    // provide DefaultServlet as is in case html addon is not used
+    if (conf.getHtmlBodyAddon()==null && conf.getHtmlHeadAddon()==null) {
+      return new DefaultServlet();
+    }
+
+    // override ResourceFactory interface part of DefaultServlet for intercepting the static index.html properly.
+    return new DefaultServlet() {
+
+        private static final long serialVersionUID = 1L;
+
+        @Override
+        public Resource getResource(String pathInContext) {
+
+            // proceed for everything but '/index.html'
+            if (!HtmlAddonResource.INDEX_HTML_PATH.equals(pathInContext)) {
+                return super.getResource(pathInContext);
+            }
+
+            // create the altered 'index.html' resource and cache it via webapp attributes
+            if (webApp.getAttribute(HTML_ADDON_IDENTIFIER) == null) {
+                webApp.setAttribute(
+                    HTML_ADDON_IDENTIFIER,
+                    new HtmlAddonResource(
+                        super.getResource(pathInContext),
+                        conf.getHtmlBodyAddon(),
+                        conf.getHtmlHeadAddon()));
+            }
+
+            return (Resource) webApp.getAttribute(HTML_ADDON_IDENTIFIER);
+        }
+
+    };
   }
 
   private static void initWebApp(WebAppContext webApp) {
@@ -465,6 +656,11 @@ public class ZeppelinServer extends ResourceConfig {
 
     // Create `ZeppelinServer` using reflection and setup REST Api
     setupRestApiContextHandler(webApp, conf);
+
+    // prometheus endpoint
+    setupPrometheusContextHandler(webApp);
+    // health endpoints
+    setupHealthCheckContextHandler(webApp);
 
     // Notebook server
     setupNotebookServer(webApp, conf, sharedServiceLocator);

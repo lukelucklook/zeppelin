@@ -17,7 +17,7 @@
 
 package org.apache.zeppelin.display;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.zeppelin.display.ui.CheckBox;
 import org.apache.zeppelin.display.ui.OptionInput;
 import org.apache.zeppelin.display.ui.OptionInput.ParamOption;
@@ -290,7 +290,11 @@ public class Input<T> implements Serializable {
       throw new RuntimeException("Could not recognize dynamic form with type: " + type);
     }
     input.setArgument(arg);
-    input.setDisplayName(displayName);
+    if (!StringUtils.isBlank(displayName)) {
+      // only set displayName when it is not empty (user explicitly specify it)
+      // e.g. ${name(display_name)=value)
+      input.setDisplayName(displayName);
+    }
     input.setHidden(hidden);
     return input;
   }

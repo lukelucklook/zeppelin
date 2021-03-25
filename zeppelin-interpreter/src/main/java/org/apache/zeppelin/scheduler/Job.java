@@ -17,7 +17,7 @@
 
 package org.apache.zeppelin.scheduler;
 
-import org.apache.commons.lang.exception.ExceptionUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,7 +38,7 @@ import java.util.Map;
  * Changing/adding/deleting non transitive field name need consideration of that.
  */
 public abstract class Job<T> {
-  private static Logger LOGGER = LoggerFactory.getLogger(Job.class);
+  private static final Logger LOGGER = LoggerFactory.getLogger(Job.class);
   private static SimpleDateFormat JOB_DATE_FORMAT = new SimpleDateFormat("yyyyMMdd-HHmmss");
 
   /**
@@ -178,13 +178,13 @@ public abstract class Job<T> {
     }
   }
 
-  private synchronized void completeWithSuccess(T result) {
+  private void completeWithSuccess(T result) {
     setResult(result);
     exception = null;
     errorMessage = null;
   }
 
-  private synchronized void completeWithError(Throwable error) {
+  private void completeWithError(Throwable error) {
     setException(error);
     errorMessage = getJobExceptionStack(error);
   }
@@ -195,17 +195,17 @@ public abstract class Job<T> {
     }
     Throwable cause = ExceptionUtils.getRootCause(e);
     if (cause != null) {
-      return ExceptionUtils.getFullStackTrace(cause);
+      return ExceptionUtils.getStackTrace(cause);
     } else {
-      return ExceptionUtils.getFullStackTrace(e);
+      return ExceptionUtils.getStackTrace(e);
     }
   }
 
-  public synchronized Throwable getException() {
+  public Throwable getException() {
     return exception;
   }
 
-  protected synchronized void setException(Throwable t) {
+  protected void setException(Throwable t) {
     exception = t;
   }
 

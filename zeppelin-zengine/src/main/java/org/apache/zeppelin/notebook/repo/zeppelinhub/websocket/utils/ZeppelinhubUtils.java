@@ -18,12 +18,13 @@ package org.apache.zeppelin.notebook.repo.zeppelinhub.websocket.utils;
 
 import java.util.HashMap;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.zeppelin.common.Message;
 import org.apache.zeppelin.notebook.repo.zeppelinhub.model.UserTokenContainer;
 import org.apache.zeppelin.notebook.repo.zeppelinhub.websocket.ZeppelinhubClient;
 import org.apache.zeppelin.notebook.repo.zeppelinhub.websocket.protocol.ZeppelinHubOp;
 import org.apache.zeppelin.notebook.repo.zeppelinhub.websocket.protocol.ZeppelinhubMessage;
-import org.apache.zeppelin.notebook.socket.Message;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,41 +33,41 @@ import org.slf4j.LoggerFactory;
  *
  */
 public class ZeppelinhubUtils {
-  private static final Logger LOG = LoggerFactory.getLogger(ZeppelinhubUtils.class);
+  private static final Logger LOGGER = LoggerFactory.getLogger(ZeppelinhubUtils.class);
 
   public static String liveMessage(String token) {
     if (StringUtils.isBlank(token)) {
-      LOG.error("Cannot create Live message: token is null or empty");
+      LOGGER.error("Cannot create Live message: token is null or empty");
       return ZeppelinhubMessage.EMPTY.toJson();
     }
     HashMap<String, Object> data = new HashMap<>();
     data.put("token", token);
     return ZeppelinhubMessage
-             .newMessage(ZeppelinHubOp.LIVE, data, new HashMap<String, String>())
+             .newMessage(ZeppelinHubOp.LIVE, data, new HashMap<>())
              .toJson();
   }
-  
+
   public static String deadMessage(String token) {
     if (StringUtils.isBlank(token)) {
-      LOG.error("Cannot create Dead message: token is null or empty");
+      LOGGER.error("Cannot create Dead message: token is null or empty");
       return ZeppelinhubMessage.EMPTY.toJson();
     }
     HashMap<String, Object> data = new HashMap<>();
     data.put("token", token);
     return ZeppelinhubMessage
-             .newMessage(ZeppelinHubOp.DEAD, data, new HashMap<String, String>())
+             .newMessage(ZeppelinHubOp.DEAD, data, new HashMap<>())
              .toJson();
   }
-  
+
   public static String pingMessage(String token) {
     if (StringUtils.isBlank(token)) {
-      LOG.error("Cannot create Ping message: token is null or empty");
+      LOGGER.error("Cannot create Ping message: token is null or empty");
       return ZeppelinhubMessage.EMPTY.toJson();
     }
     HashMap<String, Object> data = new HashMap<>();
     data.put("token", token);
     return ZeppelinhubMessage
-             .newMessage(ZeppelinHubOp.PING, data, new HashMap<String, String>())
+             .newMessage(ZeppelinHubOp.PING, data, new HashMap<>())
              .toJson();
   }
 
@@ -81,7 +82,7 @@ public class ZeppelinhubUtils {
   }
 
   public static boolean isZeppelinHubOp(String text) {
-    return (toZeppelinHubOp(text) != null); 
+    return (toZeppelinHubOp(text) != null);
   }
 
   public static Message.OP toZeppelinOp(String text) {
@@ -95,33 +96,33 @@ public class ZeppelinhubUtils {
   }
 
   public static boolean isZeppelinOp(String text) {
-    return (toZeppelinOp(text) != null); 
+    return (toZeppelinOp(text) != null);
   }
-  
+
   public static void userLoginRoutine(String username) {
-    LOG.debug("Executing user login routine");
+    LOGGER.debug("Executing user login routine");
     String token = UserTokenContainer.getInstance().getUserToken(username);
     UserTokenContainer.getInstance().setUserToken(username, token);
     String msg = ZeppelinhubUtils.liveMessage(token);
     ZeppelinhubClient.getInstance()
         .send(msg, token);
   }
-  
+
   public static void userLogoutRoutine(String username) {
-    LOG.debug("Executing user logout routine");
+    LOGGER.debug("Executing user logout routine");
     String token = UserTokenContainer.getInstance().removeUserToken(username);
     String msg = ZeppelinhubUtils.deadMessage(token);
     ZeppelinhubClient.getInstance()
         .send(msg, token);
     ZeppelinhubClient.getInstance().removeSession(token);
   }
-  
+
   public static void userSwitchTokenRoutine(String username, String originToken,
       String targetToken) {
     String offMsg = ZeppelinhubUtils.deadMessage(originToken);
     ZeppelinhubClient.getInstance().send(offMsg, originToken);
     ZeppelinhubClient.getInstance().removeSession(originToken);
-    
+
     String onMsg = ZeppelinhubUtils.liveMessage(targetToken);
     ZeppelinhubClient.getInstance().send(onMsg, targetToken);
   }

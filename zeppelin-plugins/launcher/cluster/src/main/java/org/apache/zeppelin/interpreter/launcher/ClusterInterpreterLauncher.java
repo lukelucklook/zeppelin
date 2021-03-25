@@ -51,16 +51,16 @@ public class ClusterInterpreterLauncher extends StandardInterpreterLauncher
   private static final Logger LOGGER = LoggerFactory.getLogger(ClusterInterpreterLauncher.class);
 
   private InterpreterLaunchContext context;
-  private ClusterManagerServer clusterServer = ClusterManagerServer.getInstance();
-
+  private ClusterManagerServer clusterServer;
   public ClusterInterpreterLauncher(ZeppelinConfiguration zConf, RecoveryStorage recoveryStorage)
       throws IOException {
     super(zConf, recoveryStorage);
+    this.clusterServer = ClusterManagerServer.getInstance(zConf);
     clusterServer.addClusterEventListeners(ClusterManagerServer.CLUSTER_INTP_EVENT_TOPIC, this);
   }
 
   @Override
-  public InterpreterClient launch(InterpreterLaunchContext context) throws IOException {
+  public InterpreterClient launchDirectly(InterpreterLaunchContext context) throws IOException {
     LOGGER.info("Launching Interpreter: " + context.getInterpreterSettingGroup());
 
     this.context = context;
@@ -78,9 +78,14 @@ public class ClusterInterpreterLauncher extends StandardInterpreterLauncher
 
             return new RemoteInterpreterRunningProcess(
                 context.getInterpreterSettingName(),
+                context.getInterpreterGroupId(),
                 connectTimeout,
+                getConnectPoolSize(),
+                context.getIntpEventServerHost(),
+                context.getIntpEventServerPort(),
                 intpTserverHost,
-                intpTserverPort);
+                intpTserverPort,
+                false);
           }
 
           @Override
@@ -149,9 +154,14 @@ public class ClusterInterpreterLauncher extends StandardInterpreterLauncher
 
             return new RemoteInterpreterRunningProcess(
                 context.getInterpreterSettingName(),
+                context.getInterpreterGroupId(),
                 connectTimeout,
+                getConnectPoolSize(),
+                context.getIntpEventServerHost(),
+                context.getIntpEventServerPort(),
                 intpTserverHost,
-                intpTserverPort);
+                intpTserverPort,
+                false);
           }
 
           @Override
@@ -237,18 +247,20 @@ public class ClusterInterpreterLauncher extends StandardInterpreterLauncher
       String intpSetGroupName = context.getInterpreterSettingGroup();
       String intpSetName = context.getInterpreterSettingName();
       int connectTimeout = getConnectTimeout();
+      int connectionPoolSize = getConnectPoolSize();
       String localRepoPath = zConf.getInterpreterLocalRepoPath() + "/"
           + context.getInterpreterSettingId();
 
       clusterIntpProcess = new ClusterInterpreterProcess(
           runner != null ? runner.getPath() : zConf.getInterpreterRemoteRunnerPath(),
-          context.getZeppelinServerRPCPort(),
-          context.getZeppelinServerHost(),
+          context.getIntpEventServerPort(),
+          context.getIntpEventServerHost(),
           zConf.getInterpreterPortRange(),
           zConf.getInterpreterDir() + "/" + intpSetGroupName,
           localRepoPath,
           buildEnvFromProperties(context),
           connectTimeout,
+          connectionPoolSize,
           intpSetName,
           context.getInterpreterGroupId(),
           option.isUserImpersonate());

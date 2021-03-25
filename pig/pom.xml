@@ -23,14 +23,14 @@
     <parent>
         <artifactId>zeppelin-interpreter-parent</artifactId>
         <groupId>org.apache.zeppelin</groupId>
-        <version>0.9.0-SNAPSHOT</version>
+        <version>0.10.0-SNAPSHOT</version>
         <relativePath>../zeppelin-interpreter-parent/pom.xml</relativePath>
     </parent>
 
     <groupId>org.apache.zeppelin</groupId>
     <artifactId>zeppelin-pig</artifactId>
     <packaging>jar</packaging>
-    <version>0.9.0-SNAPSHOT</version>
+    <version>0.10.0-SNAPSHOT</version>
     <name>Zeppelin: Apache Pig Interpreter</name>
     <description>Zeppelin interpreter for Apache Pig</description>
     <url>https://zeppelin.apache.org</url>
@@ -38,7 +38,7 @@
     <properties>
         <interpreter.name>pig</interpreter.name>
         <pig.version>0.17.0</pig.version>
-        <hadoop.version>2.6.0</hadoop.version>
+        <hadoop.version>${hadoop2.6.version}</hadoop.version>
         <tez.version>0.7.0</tez.version>
         <pig.spark.version>1.6.3</pig.spark.version>
         <pig.scala.version>2.10</pig.scala.version>
@@ -160,7 +160,8 @@
             <plugin>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <forkMode>always</forkMode>
+                    <forkCount>1</forkCount>
+                    <reuseForks>false</reuseForks>
                 </configuration>
             </plugin>
             <plugin>

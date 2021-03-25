@@ -19,6 +19,8 @@ function WebsocketEventFactory($rootScope, $websocket, $location, baseUrlSrv, sa
 
   let websocketCalls = {};
   let pingIntervalId;
+  const uniqueClientId = Math.random().toString(36).substring(2, 7);
+  let lastMsgIdSeqSent = 0;
 
   websocketCalls.ws = $websocket(baseUrlSrv.getWebsocketUrl());
   websocketCalls.ws.reconnectIfNotNormalClose = true;
@@ -41,6 +43,8 @@ function WebsocketEventFactory($rootScope, $websocket, $location, baseUrlSrv, sa
       data.ticket = '';
       data.roles = '';
     }
+
+    data.msgId = uniqueClientId + '-' + ++lastMsgIdSeqSent;
     console.log('Send >> %o, %o, %o, %o, %o', data.op, data.principal, data.ticket, data.roles, data);
     return websocketCalls.ws.send(JSON.stringify(data));
   };
@@ -59,6 +63,11 @@ function WebsocketEventFactory($rootScope, $websocket, $location, baseUrlSrv, sa
 
     let op = payload.op;
     let data = payload.data;
+    let msgId = payload.msgId;
+    const uniqueClientId = msgId ? msgId.split('-')[0] : undefined;
+    const msgIdSeqReceived = msgId ? parseInt(msgId.split('-')[1]) : undefined;
+    const isResponseForRequestFromThisClient = uniqueClientId === uniqueClientId;
+
     if (op === 'NOTE') {
       $rootScope.$broadcast('setNoteContent', data.note);
     } else if (op === 'NEW_NOTE') {
@@ -111,7 +120,14 @@ function WebsocketEventFactory($rootScope, $websocket, $location, baseUrlSrv, sa
         buttons: btn,
       });
     } else if (op === 'PARAGRAPH') {
-      $rootScope.$broadcast('updateParagraph', data);
+      if (isResponseForRequestFromThisClient &&
+          lastMsgIdSeqSent > msgIdSeqReceived
+      ) {
+        // paragraph is already updated by short circuit.
+        console.log('PARAPGRAPH is already updated by shortcircuit');
+      } else {
+        $rootScope.$broadcast('updateParagraph', data);
+      }
     } else if (op === 'PATCH_PARAGRAPH') {
       $rootScope.$broadcast('patchReceived', data);
     } else if (op === 'COLLABORATIVE_MODE_STATUS') {
@@ -183,8 +199,8 @@ function WebsocketEventFactory($rootScope, $websocket, $location, baseUrlSrv, sa
       $rootScope.$broadcast('setNoteRevisionResult', data);
     } else if (op === 'PARAS_INFO') {
       $rootScope.$broadcast('updateParaInfos', data);
-    } else if (op === 'CONVERT_NOTE_NBFORMAT') {
-      saveAsService.saveAs(data.nbformat, data.name, 'zepp.ipynb');
+    } else if (op === 'CONVERTED_NOTE_NBFORMAT') {
+      saveAsService.saveAs(data.nbformat, data.noteName, '.ipynb');
     } else if (op === 'INTERPRETER_INSTALL_STARTED') {
       ngToast.info(data.message);
     } else if (op === 'INTERPRETER_INSTALL_RESULT') {

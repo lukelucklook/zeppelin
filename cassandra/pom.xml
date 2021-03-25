@@ -21,33 +21,27 @@
     <parent>
         <artifactId>zeppelin-interpreter-parent</artifactId>
         <groupId>org.apache.zeppelin</groupId>
-        <version>0.9.0-SNAPSHOT</version>
+        <version>0.10.0-SNAPSHOT</version>
         <relativePath>../zeppelin-interpreter-parent/pom.xml</relativePath>
     </parent>
 
     <groupId>org.apache.zeppelin</groupId>
     <artifactId>zeppelin-cassandra</artifactId>
     <packaging>jar</packaging>
-    <version>0.9.0-SNAPSHOT</version>
+    <version>0.10.0-SNAPSHOT</version>
     <name>Zeppelin: Apache Cassandra interpreter</name>
     <description>Zeppelin cassandra support</description>
 
     <properties>
-        <cassandra.driver.version>3.7.2</cassandra.driver.version>
-        <snappy.version>1.1.2.6</snappy.version>
-        <lz4.version>1.4.1</lz4.version>
-        <commons-lang.version>3.3.2</commons-lang.version>
+        <cassandra.driver.version>4.8.0</cassandra.driver.version>
+        <snappy.version>1.1.7.3</snappy.version>
+        <lz4.version>1.6.0</lz4.version>
         <scalate.version>1.7.1</scalate.version>
-        <cassandra.guava.version>19.0</cassandra.guava.version>
 
         <!-- test library versions -->
-        <achilles.version>3.2.4-Zeppelin</achilles.version>
         <jna.version>4.2.0</jna.version>
+        <cassandra.unit.version>4.3.1.0</cassandra.unit.version>
 
-        <!-- plugin versions -->
-        <plugin.scala.version>2.15.2</plugin.scala.version>
-        <plugin.scalatest.version>1.0</plugin.scalatest.version>
-        <plugin.scalate.version>1.7.1</plugin.scalate.version>
         <interpreter.name>cassandra</interpreter.name>
     </properties>
 
@@ -57,7 +51,7 @@
             <groupId>org.apache.zeppelin</groupId>
             <artifactId>zeppelin-interpreter</artifactId>
             <version>${project.version}</version>
-            <scope>test</scope>
+            <scope>provided</scope>
             <exclusions>
                 <exclusion>
                     <groupId>org.hamcrest</groupId>
@@ -67,15 +61,9 @@
         </dependency>
 
         <dependency>
-            <groupId>com.datastax.cassandra</groupId>
-            <artifactId>cassandra-driver-core</artifactId>
+            <groupId>com.datastax.oss</groupId>
+            <artifactId>java-driver-core</artifactId>
             <version>${cassandra.driver.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>com.google.guava</groupId>
-            <artifactId>guava</artifactId>
-            <version>${cassandra.guava.version}</version>
         </dependency>
 
         <!-- Compression libraries for the cassandra-driver protocol. -->
@@ -114,10 +102,16 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- we'll switch back to it after removing support for Scala 2.10
+        <dependency>
+            <groupId>org.scala-lang.modules</groupId>
+            <artifactId>scala-java8-compat_${scala.binary.version}</artifactId>
+            <version>${scala.java8.compat.version}</version>
+        </dependency> -->
+
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
-            <version>${commons-lang.version}</version>
         </dependency>
 
         <dependency>
@@ -129,21 +123,6 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-log4j12</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>commons-logging</groupId>
-            <artifactId>commons-logging</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>log4j</groupId>
-            <artifactId>log4j</artifactId>
         </dependency>
 
         <!-- test libraries -->
@@ -162,26 +141,19 @@
         </dependency>
 
         <dependency>
-            <groupId>info.archinnov</groupId>
-            <artifactId>achilles-embedded</artifactId>
-            <version>${achilles.version}</version>
-            <scope>test</scope>
-            <exclusions>
-                <exclusion>
-                    <groupId>ch.qos.logback</groupId>
-                    <artifactId>logback-core</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>ch.qos.logback</groupId>
-                    <artifactId>logback-classic</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>net.java.dev.jna</groupId>
-                    <artifactId>jna</artifactId>
-                </exclusion>
-            </exclusions>
+          <groupId>org.cassandraunit</groupId>
+          <artifactId>cassandra-unit</artifactId>
+          <version>${cassandra.unit.version}</version>
+          <scope>test</scope>
+          <exclusions>
+            <exclusion>
+              <groupId>com.datastax.oss</groupId>
+              <artifactId>java-driver-core</artifactId>
+            </exclusion>
+          </exclusions>
         </dependency>
 
+        
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-core</artifactId>
@@ -196,12 +168,21 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources-filtered</directory>
+                <filtering>true</filtering>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+            </resource>
+        </resources>
         <plugins>
             <!-- Plugin to compile Scala code -->
             <plugin>
                 <groupId>org.scala-tools</groupId>
                 <artifactId>maven-scala-plugin</artifactId>
-                <version>${plugin.scala.version}</version>
                 <executions>
                     <execution>
                         <id>compile</id>
@@ -229,7 +210,6 @@
             <plugin>
                 <groupId>org.scalatest</groupId>
                 <artifactId>scalatest-maven-plugin</artifactId>
-                <version>${plugin.scalatest.version}</version>
                 <executions>
                     <execution>
                         <id>test</id>
@@ -243,7 +223,6 @@
             <plugin>
                 <groupId>org.scalatra.scalate</groupId>
                 <artifactId>maven-scalate-plugin_${scala.binary.version}</artifactId>
-                <version>${plugin.scalate.version}</version>
                 <executions>
                     <execution>
                         <id>compile</id>

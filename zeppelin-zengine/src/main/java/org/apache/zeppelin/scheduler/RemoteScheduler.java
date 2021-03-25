@@ -19,10 +19,12 @@ package org.apache.zeppelin.scheduler;
 
 import org.apache.zeppelin.interpreter.remote.RemoteInterpreter;
 import org.apache.zeppelin.scheduler.Job.Status;
+import org.apache.zeppelin.util.ExecutorUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * RemoteScheduler runs in ZeppelinServer and proxies Scheduler running on RemoteInterpreter.
@@ -47,14 +49,31 @@ public class RemoteScheduler extends AbstractScheduler {
   public void runJobInScheduler(Job job) {
     JobRunner jobRunner = new JobRunner(this, job);
     executor.execute(jobRunner);
-    // wait until it is submitted to the remote
-    while (!jobRunner.isJobSubmittedInRemote()) {
-      try {
-        Thread.sleep(100);
-      } catch (InterruptedException e) {
-        LOGGER.error("Exception in RemoteScheduler while jobRunner.isJobSubmittedInRemote " +
-            "queue.wait", e);
+    String executionMode =
+            remoteInterpreter.getProperty(".execution.mode", "paragraph");
+    if (executionMode.equals("paragraph")) {
+      // wait until it is submitted to the remote
+      while (!jobRunner.isJobSubmittedInRemote()) {
+        try {
+          Thread.sleep(100);
+        } catch (InterruptedException e) {
+          LOGGER.error("Exception in RemoteScheduler while jobRunner.isJobSubmittedInRemote " +
+                  "queue.wait", e);
+        }
       }
+    } else if (executionMode.equals("note")){
+      // wait until it is finished
+      while (!jobRunner.isJobExecuted()) {
+        try {
+          Thread.sleep(100);
+        } catch (InterruptedException e) {
+          LOGGER.error("Exception in RemoteScheduler while jobRunner.isJobExecuted " +
+                  "queue.wait", e);
+        }
+      }
+    } else {
+      throw new RuntimeException("Invalid job execution.mode: " + executionMode +
+              ", only 'note' and 'paragraph' are valid");
     }
   }
 
@@ -152,6 +171,10 @@ public class RemoteScheduler extends AbstractScheduler {
       return jobSubmittedRemotely;
     }
 
+    public boolean isJobExecuted() {
+      return jobExecuted;
+    }
+
     @Override
     public void run() {
       JobStatusPoller jobStatusPoller = new JobStatusPoller(job, this, 100);
@@ -198,4 +221,10 @@ public class RemoteScheduler extends AbstractScheduler {
       }
     }
   }
+
+  @Override
+  public void stop(int stopTimeoutVal, TimeUnit stopTimeoutUnit) {
+    super.stop();
+  }
+
 }

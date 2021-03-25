@@ -16,7 +16,7 @@
  */
 package org.apache.zeppelin.integration;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.zeppelin.CommandExecutor;
 import org.apache.zeppelin.ProcessData;
 import org.apache.zeppelin.AbstractZeppelinIT;
@@ -43,7 +43,6 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.List;
 
 import static org.junit.Assert.assertTrue;
 
@@ -82,8 +81,8 @@ public class InterpreterModeActionsIT extends AbstractZeppelinIT {
     try {
       System.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_HOME.getVarName(), new File("../").getAbsolutePath());
       ZeppelinConfiguration conf = ZeppelinConfiguration.create();
-      shiroPath = conf.getRelativeDir(String.format("%s/shiro.ini", conf.getConfDir()));
-      interpreterOptionPath = conf.getRelativeDir(String.format("%s/interpreter.json", conf.getConfDir()));
+      shiroPath = conf.getAbsoluteDir(String.format("%s/shiro.ini", conf.getConfDir()));
+      interpreterOptionPath = conf.getAbsoluteDir(String.format("%s/interpreter.json", conf.getConfDir()));
       File shiroFile = new File(shiroPath);
       if (shiroFile.exists()) {
         originalShiro = StringUtils.join(FileUtils.readLines(shiroFile, "UTF-8"), "\n");
@@ -156,7 +155,7 @@ public class InterpreterModeActionsIT extends AbstractZeppelinIT {
   }
 
   private void setPythonParagraph(int num, String text) {
-    setTextOfParagraph(num, "%python\\n " + text);
+    setTextOfParagraph(num, "%python\\n" + text);
     runParagraph(num);
     try {
       waitForParagraph(num, "FINISHED");
@@ -207,7 +206,7 @@ public class InterpreterModeActionsIT extends AbstractZeppelinIT {
       waitForParagraph(1, "READY");
       interpreterModeActionsIT.setPythonParagraph(1, "user=\"user1\"");
       waitForParagraph(2, "READY");
-      interpreterModeActionsIT.setPythonParagraph(2, "print user");
+      interpreterModeActionsIT.setPythonParagraph(2, "print(user)");
       collector.checkThat("The output field paragraph contains",
           driver.findElement(By.xpath(
               getParagraphXPath(2) + "//div[contains(@class, 'text plainTextContent')]")).getText(),
@@ -238,7 +237,7 @@ public class InterpreterModeActionsIT extends AbstractZeppelinIT {
       waitForParagraph(1, "READY");
       interpreterModeActionsIT.setPythonParagraph(1, "user=\"user2\"");
       waitForParagraph(2, "READY");
-      interpreterModeActionsIT.setPythonParagraph(2, "print user");
+      interpreterModeActionsIT.setPythonParagraph(2, "print(user)");
       collector.checkThat("The output field paragraph contains",
           driver.findElement(By.xpath(
               getParagraphXPath(2) + "//div[contains(@class, 'text plainTextContent')]")).getText(),
@@ -364,7 +363,7 @@ public class InterpreterModeActionsIT extends AbstractZeppelinIT {
       waitForParagraph(1, "READY");
       interpreterModeActionsIT.setPythonParagraph(1, "user=\"user1\"");
       waitForParagraph(2, "READY");
-      interpreterModeActionsIT.setPythonParagraph(2, "print user");
+      interpreterModeActionsIT.setPythonParagraph(2, "print(user)");
 
       collector.checkThat("The output field paragraph contains",
           driver.findElement(By.xpath(
@@ -397,7 +396,7 @@ public class InterpreterModeActionsIT extends AbstractZeppelinIT {
       waitForParagraph(1, "READY");
       interpreterModeActionsIT.setPythonParagraph(1, "user=\"user2\"");
       waitForParagraph(2, "READY");
-      interpreterModeActionsIT.setPythonParagraph(2, "print user");
+      interpreterModeActionsIT.setPythonParagraph(2, "print(user)");
       collector.checkThat("The output field paragraph contains",
           driver.findElement(By.xpath(
               getParagraphXPath(2) + "//div[contains(@class, 'text plainTextContent')]")).getText(),
@@ -476,8 +475,7 @@ public class InterpreterModeActionsIT extends AbstractZeppelinIT {
       element = (new WebDriverWait(driver, MAX_BROWSER_TIMEOUT_SEC))
           .until(ExpectedConditions.visibilityOfElementLocated(locator));
       if (element.isDisplayed()) {
-        pollingWait(By.xpath("//*[@id='notebook-names']//a[contains(@href, '" + user2noteId + "')]"),
-            MAX_BROWSER_TIMEOUT_SEC).click();
+        clickAndWait(By.xpath("//*[@id='notebook-names']//a[contains(@href, '" + user2noteId + "')]"));
       }
       clickAndWait(By.xpath("//*[@id='actionbar']//span[contains(@uib-tooltip, 'Interpreter binding')]"));
       clickAndWait(By.xpath("//div[@data-ng-repeat='item in interpreterBindings' and contains(., 'python')]//a"));
@@ -641,7 +639,7 @@ public class InterpreterModeActionsIT extends AbstractZeppelinIT {
       waitForParagraph(1, "READY");
       interpreterModeActionsIT.setPythonParagraph(1, "user=\"user1\"");
       waitForParagraph(2, "READY");
-      interpreterModeActionsIT.setPythonParagraph(2, "print user");
+      interpreterModeActionsIT.setPythonParagraph(2, "print(user)");
 
       collector.checkThat("The output field paragraph contains",
           driver.findElement(By.xpath(
@@ -674,7 +672,7 @@ public class InterpreterModeActionsIT extends AbstractZeppelinIT {
       waitForParagraph(1, "READY");
       interpreterModeActionsIT.setPythonParagraph(1, "user=\"user2\"");
       waitForParagraph(2, "READY");
-      interpreterModeActionsIT.setPythonParagraph(2, "print user");
+      interpreterModeActionsIT.setPythonParagraph(2, "print(user)");
 
       collector.checkThat("The output field paragraph contains",
           driver.findElement(By.xpath(
@@ -755,8 +753,7 @@ public class InterpreterModeActionsIT extends AbstractZeppelinIT {
       element = (new WebDriverWait(driver, MAX_BROWSER_TIMEOUT_SEC))
           .until(ExpectedConditions.visibilityOfElementLocated(locator));
       if (element.isDisplayed()) {
-        pollingWait(By.xpath("//*[@id='notebook-names']//a[contains(@href, '" + user2noteId + "')]"),
-            MAX_BROWSER_TIMEOUT_SEC).click();
+        clickAndWait(By.xpath("//*[@id='notebook-names']//a[contains(@href, '" + user2noteId + "')]"));
       }
       clickAndWait(By.xpath("//*[@id='actionbar']//span[contains(@uib-tooltip, 'Interpreter binding')]"));
       clickAndWait(By.xpath("//div[@data-ng-repeat='item in interpreterBindings' and contains(., 'python')]//a"));

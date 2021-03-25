@@ -113,7 +113,7 @@ And then start your spark interpreter
 sc.parallelize(1 to 100).count
 ...
 ```
-While `master` property of SparkInterpreter starts with `k8s://` (default `k8s://https://kubernetes.default.svc` when Zeppelin started using zeppelin-server.yaml), Spark executors will be automatically created in your Kubernetes cluster.
+While `spark.master` property of SparkInterpreter starts with `k8s://` (default `k8s://https://kubernetes.default.svc` when Zeppelin started using zeppelin-server.yaml), Spark executors will be automatically created in your Kubernetes cluster.
 Spark UI is accessible by clicking `SPARK JOB` on the Paragraph. 
 
 Check [here](https://spark.apache.org/docs/latest/running-on-kubernetes.html) to know more about Running Spark on Kubernetes.
@@ -143,7 +143,7 @@ $ mv zeppelin-distribution/target/zeppelin-*.tar.gz scripts/docker/zeppelin/bin/
 #    wget -O /tmp/zeppelin-${Z_VERSION}-bin-all.tgz http://archive.apache.org/dist/zeppelin/zeppelin-${Z_VERSION}/zeppelin-${Z_VERSION}-bin-all.tgz && \
 #    tar -zxvf /tmp/zeppelin-${Z_VERSION}-bin-all.tgz && \
 #    rm -rf /tmp/zeppelin-${Z_VERSION}-bin-all.tgz && \
-#    mv /zeppelin-${Z_VERSION}-bin-all ${Z_HOME}
+#    mv /zeppelin-${Z_VERSION}-bin-all ${ZEPPELIN_HOME}
 
 # Add following lines right after the commented line above
 ADD zeppelin-${Z_VERSION}.tar.gz /
@@ -192,7 +192,7 @@ and all interpreter properties are accessible inside the templates.
 
 When interpreter group is `spark`, Zeppelin sets necessary spark configuration automatically to use Spark on Kubernetes.
 It uses client mode, so Spark interpreter Pod works as a Spark driver, spark executors are launched in separate Pods.
-This auto configuration can be overrided by manually setting `master` property of Spark interpreter.
+This auto configuration can be overrided by manually setting `spark.master` property of Spark interpreter.
 
 
 ### Accessing Spark UI (or Service running in interpreter Pod)
@@ -260,9 +260,10 @@ Zeppelin can run locally (such as inside your IDE in debug mode) and able to run
 
 | Environment variable | Value | Description |
 | ----- | ----- | ----- |
-| ZEPPELIN_RUN_MODE | k8s | Make Zeppelin run interpreter on Kubernetes |
-| ZEPPELIN_K8S_PORTFORWARD | true | Enable port forwarding from local Zeppelin instance to Interpreters running on Kubernetes |
-| ZEPPELIN_K8S_CONTAINER_IMAGE | <image>:<version> | Zeppelin interpreter docker image to use |
-| ZEPPELIN_K8S_SPARK_CONTAINER_IMAGE | <image>:<version> | Spark docker image to use |
+| `ZEPPELIN_RUN_MODE` | `k8s` | Make Zeppelin run interpreter on Kubernetes |
+| `ZEPPELIN_K8S_PORTFORWARD` | `true` | Enable port forwarding from local Zeppelin instance to Interpreters running on Kubernetes |
+| `ZEPPELIN_K8S_CONTAINER_IMAGE` | `<image>:<version>` | Zeppelin interpreter docker image to use |
+| `ZEPPELIN_K8S_SPARK_CONTAINER_IMAGE` | `<image>:<version>` | Spark docker image to use |
+| `ZEPPELIN_K8S_NAMESPACE` | `<k8s namespace>` | Kubernetes namespace  to use |
+| `KUBERNETES_AUTH_TOKEN` | `<token>` | Kubernetes auth token to create resources |
 
-`kubectl` command need to be configured to connect your Kubernetes cluster.

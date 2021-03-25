@@ -25,6 +25,8 @@ import org.apache.zeppelin.interpreter.InterpreterContext;
 import org.apache.zeppelin.interpreter.InterpreterException;
 import org.apache.zeppelin.interpreter.InterpreterResult;
 import org.apache.zeppelin.interpreter.InterpreterSetting;
+import org.apache.zeppelin.notebook.Note;
+import org.apache.zeppelin.notebook.NoteInfo;
 import org.apache.zeppelin.resource.LocalResourcePool;
 import org.junit.Before;
 import org.junit.Test;
@@ -32,6 +34,7 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
+import static org.mockito.Mockito.when;
 
 public class RemoteAngularObjectTest extends AbstractInterpreterTest
     implements AngularObjectRegistryListener {
@@ -48,6 +51,8 @@ public class RemoteAngularObjectTest extends AbstractInterpreterTest
   @Before
   public void setUp() throws Exception {
     super.setUp();
+    Note note1 = new Note(new NoteInfo("note1", "/note_1"));
+    when(mockNotebook.getNote("note1")).thenReturn(note1);
 
     onAdd = new AtomicInteger(0);
     onUpdate = new AtomicInteger(0);
@@ -147,17 +152,17 @@ public class RemoteAngularObjectTest extends AbstractInterpreterTest
   }
 
   @Override
-  public void onAdd(String interpreterGroupId, AngularObject object) {
+  public void onAddAngularObject(String interpreterGroupId, AngularObject angularObject) {
     onAdd.incrementAndGet();
   }
 
   @Override
-  public void onUpdate(String interpreterGroupId, AngularObject object) {
+  public void onUpdateAngularObject(String interpreterGroupId, AngularObject angularObject) {
     onUpdate.incrementAndGet();
   }
 
   @Override
-  public void onRemove(String interpreterGroupId, String name, String noteId, String paragraphId) {
+  public void onRemoveAngularObject(String interpreterGroupId, AngularObject angularObject) {
     onRemove.incrementAndGet();
   }
 

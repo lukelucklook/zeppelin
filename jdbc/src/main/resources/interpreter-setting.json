@@ -25,19 +25,19 @@
         "description": "The JDBC user password",
         "type": "password"
       },
-      "default.completer.ttlInSeconds": {
-        "envName": null,
-        "propertyName": "default.completer.ttlInSeconds",
-        "defaultValue": "120",
-        "description": "Time to live sql completer in seconds (-1 to update everytime, 0 to disable update)",
-        "type": "number"
-      },
       "default.driver": {
         "envName": null,
         "propertyName": "default.driver",
         "defaultValue": "org.postgresql.Driver",
         "description": "JDBC Driver Name",
         "type": "string"
+      },
+      "default.completer.ttlInSeconds": {
+        "envName": null,
+        "propertyName": "default.completer.ttlInSeconds",
+        "defaultValue": "120",
+        "description": "Time to live sql completer in seconds (-1 to update everytime, 0 to disable update)",
+        "type": "number"
       },
       "default.completer.schemaFilters": {
         "envName": null,
@@ -60,13 +60,6 @@
         "description": "Runs before each run of the paragraph, in the same connection",
         "type": "textarea"
       },
-      "default.splitQueries": {
-        "envName": null,
-        "propertyName": "default.splitQueries",
-        "defaultValue": false,
-        "description": "Each query is executed apart and returns the result",
-        "type": "checkbox"
-      },
       "common.max_count": {
         "envName": null,
         "propertyName": "common.max_count",
@@ -80,6 +73,13 @@
         "defaultValue": "",
         "description": "If auth type is needed, Example: KERBEROS",
         "type": "string"
+      },
+      "zeppelin.jdbc.auth.kerberos.proxy.enable": {
+        "envName": null,
+        "propertyName": "zeppelin.jdbc.auth.kerberos.proxy.enable",
+        "defaultValue": "true",
+        "description": "When auth type is Kerberos, enable/disable Kerberos proxy with the login user to get the connection. Default value is true.",
+        "type": "checkbox"
       },
       "zeppelin.jdbc.concurrent.use": {
         "envName": null,
@@ -128,6 +128,20 @@
         "propertyName": "zeppelin.jdbc.maxRows",
         "defaultValue": "1000",
         "description": "Maximum number of rows fetched from the query.",
+        "type": "number"
+      },
+      "zeppelin.jdbc.hive.timeout.threshold": {
+        "envName": null,
+        "propertyName": "zeppelin.jdbc.hive.timeout.threshold",
+        "defaultValue": "60000",
+        "description": "Timeout for hive job timeout",
+        "type": "number"
+      },
+      "zeppelin.jdbc.hive.monitor.query_interval": {
+        "envName": null,
+        "propertyName": "zeppelin.jdbc.hive.monitor.query_interval",
+        "defaultValue": "1000",
+        "description": "Query interval for hive statement",
         "type": "number"
       }
     },

@@ -16,8 +16,8 @@
 # limitations under the License.
 #
 
-if [ -L ${BASH_SOURCE-$0} ]; then
-  FWDIR=$(dirname $(readlink "${BASH_SOURCE-$0}"))
+if [ -L "${BASH_SOURCE-$0}" ]; then
+  FWDIR=$(dirname "$(readlink "${BASH_SOURCE-$0}")")
 else
   FWDIR=$(dirname "${BASH_SOURCE-$0}")
 fi
@@ -25,7 +25,8 @@ fi
 if [[ -z "${ZEPPELIN_HOME}" ]]; then
   # Make ZEPPELIN_HOME look cleaner in logs by getting rid of the
   # extra ../
-  export ZEPPELIN_HOME="$(cd "${FWDIR}/.."; pwd)"
+  ZEPPELIN_HOME="$(cd "${FWDIR}/.." || exit; pwd)"
+  export ZEPPELIN_HOME
 fi
 
 if [[ -z "${ZEPPELIN_CONF_DIR}" ]]; then
@@ -44,7 +45,8 @@ if [[ -z "${ZEPPELIN_WAR}" ]]; then
   if [[ -d "${ZEPPELIN_HOME}/zeppelin-web/dist" ]]; then
     export ZEPPELIN_WAR="${ZEPPELIN_HOME}/zeppelin-web/dist"
   else
-    export ZEPPELIN_WAR=$(find -L "${ZEPPELIN_HOME}" -name "zeppelin-web-[0-9]*.war")
+    ZEPPELIN_WAR=$(find -L "${ZEPPELIN_HOME}" -name "zeppelin-web-[0-9]*.war")
+    export ZEPPELIN_WAR
   fi
 fi
 
@@ -52,7 +54,8 @@ if [[ -z "${ZEPPELIN_ANGULAR_WAR}" ]]; then
   if [[ -d "${ZEPPELIN_HOME}/zeppelin-web/dist" ]]; then
     export ZEPPELIN_ANGULAR_WAR="${ZEPPELIN_HOME}/zeppelin-web-angular/dist/zeppelin"
   else
-    export ZEPPELIN_ANGULAR_WAR=$(find -L "${ZEPPELIN_HOME}" -name "zeppelin-web-angular*.war")
+    ZEPPELIN_ANGULAR_WAR=$(find -L "${ZEPPELIN_HOME}" -name "zeppelin-web-angular*.war")
+    export ZEPPELIN_ANGULAR_WAR
   fi
 fi
 
@@ -62,9 +65,26 @@ fi
 
 ZEPPELIN_CLASSPATH+=":${ZEPPELIN_CONF_DIR}"
 
+function check_java_version() {
+    if [[ -n "${JAVA_HOME+x}" ]]; then
+        JAVA="$JAVA_HOME/bin/java"
+    fi
+    java_ver_output=$("${JAVA:-java}" -version 2>&1)
+    jvmver=$(echo "$java_ver_output" | grep '[openjdk|java] version' | awk -F'"' 'NR==1 {print $2}' | cut -d\- -f1)
+    JVM_VERSION=$(echo "$jvmver"|sed -e 's|^\([0-9][0-9]*\)\..*$|\1|')
+    if [ "$JVM_VERSION" = "1" ]; then
+        JVM_VERSION=$(echo "$jvmver"|sed -e 's|^1\.\([0-9][0-9]*\)\..*$|\1|')
+    fi
+
+    if [ "$JVM_VERSION" -lt 8 ] || { [ "$JVM_VERSION" -eq 8 ] && [ "${jvmver#*_}" -lt 151 ]; } ; then
+        echo "Apache Zeppelin requires either Java 8 update 151 or newer"
+        exit 1;
+    fi
+}
+
 function addEachJarInDir(){
   if [[ -d "${1}" ]]; then
-    for jar in $(find -L "${1}" -maxdepth 1 -name '*jar'); do
+    for jar in "${1}"/*.jar ; do
       ZEPPELIN_CLASSPATH="$jar:$ZEPPELIN_CLASSPATH"
     done
   fi
@@ -72,7 +92,7 @@ function addEachJarInDir(){
 
 function addEachJarInDirRecursive(){
   if [[ -d "${1}" ]]; then
-    for jar in $(find -L "${1}" -type f -name '*jar'); do
+    for jar in "${1}"/**/*.jar ; do
       ZEPPELIN_CLASSPATH="$jar:$ZEPPELIN_CLASSPATH"
     done
   fi
@@ -80,8 +100,8 @@ function addEachJarInDirRecursive(){
 
 function addEachJarInDirRecursiveForIntp(){
   if [[ -d "${1}" ]]; then
-    for jar in $(find -L "${1}" -type f -name '*jar'); do
-      ZEPPELIN_INTP_CLASSPATH="$jar:$ZEPPELIN_INTP_CLASSPATH"
+    for jar in "${1}"/*.jar; do
+      ZEPPELIN_INTP_CLASSPATH="$jar:${ZEPPELIN_INTP_CLASSPATH}"
     done
   fi
 }
@@ -106,7 +126,7 @@ function getZeppelinVersion(){
     fi
     addJarInDir "${ZEPPELIN_HOME}/zeppelin-server/target/lib"
     CLASSPATH+=":${ZEPPELIN_CLASSPATH}"
-    $ZEPPELIN_RUNNER -cp $CLASSPATH $ZEPPELIN_COMMANDLINE_MAIN -v
+    $ZEPPELIN_RUNNER -cp "${CLASSPATH}" "${ZEPPELIN_COMMANDLINE_MAIN}" -v
     exit 0
 }
 
@@ -118,20 +138,26 @@ if [[ -z "${ZEPPELIN_ENCODING}" ]]; then
 fi
 
 if [[ -z "${ZEPPELIN_MEM}" ]]; then
-  export ZEPPELIN_MEM="-Xms1024m -Xmx1024m -XX:MaxPermSize=512m"
+  export ZEPPELIN_MEM="-Xmx1024m"
 fi
 
-if [[ -z "${ZEPPELIN_INTP_MEM}" ]]; then
-  export ZEPPELIN_INTP_MEM="-Xms1024m -Xmx2048m -XX:MaxPermSize=512m"
+if [[ ( -z "${ZEPPELIN_INTP_MEM}" ) && ( "${ZEPPELIN_INTERPRETER_LAUNCHER}" != "yarn" ) ]]; then
+  export ZEPPELIN_INTP_MEM="-Xmx1024m"
 fi
 
 JAVA_OPTS+=" ${ZEPPELIN_JAVA_OPTS} -Dfile.encoding=${ZEPPELIN_ENCODING} ${ZEPPELIN_MEM}"
-JAVA_OPTS+=" -Dlog4j.configuration=file://${ZEPPELIN_CONF_DIR}/log4j.properties"
+if [[ -n "${ZEPPELIN_IN_DOCKER}" ]]; then
+    JAVA_OPTS+=" -Dlog4j.configuration=file://${ZEPPELIN_CONF_DIR}/log4j_docker.properties"
+else
+    JAVA_OPTS+=" -Dlog4j.configuration=file://${ZEPPELIN_CONF_DIR}/log4j.properties"
+fi
 export JAVA_OPTS
 
 JAVA_INTP_OPTS="${ZEPPELIN_INTP_JAVA_OPTS} -Dfile.encoding=${ZEPPELIN_ENCODING}"
-if [[ -z "${ZEPPELIN_SPARK_YARN_CLUSTER}" ]]; then
-    JAVA_INTP_OPTS+=" -Dlog4j.configuration=file://${ZEPPELIN_CONF_DIR}/log4j.properties"
+if [[ -n "${ZEPPELIN_IN_DOCKER}" ]]; then
+    JAVA_INTP_OPTS+=" -Dlog4j.configuration=file://${ZEPPELIN_CONF_DIR}/log4j_docker.properties -Dlog4j.configurationFile=file://${ZEPPELIN_CONF_DIR}/log4j2_docker.properties"
+elif [[ -z "${ZEPPELIN_SPARK_YARN_CLUSTER}" ]]; then
+    JAVA_INTP_OPTS+=" -Dlog4j.configuration=file://${ZEPPELIN_CONF_DIR}/log4j.properties -Dlog4j.configurationFile=file://${ZEPPELIN_CONF_DIR}/log4j2.properties"
 else
     JAVA_INTP_OPTS+=" -Dlog4j.configuration=log4j_yarn_cluster.properties"
 fi

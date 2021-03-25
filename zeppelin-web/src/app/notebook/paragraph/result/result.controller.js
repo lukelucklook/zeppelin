@@ -160,6 +160,7 @@ function ResultCtrl($scope, $rootScope, $route, $window, $routeParams, $location
   // queue for append output
   const textResultQueueForAppend = [];
 
+  const retryRenderElements = {};
   // prevent body area scrollbar from blocking due to scroll in paragraph results
   $scope.mouseOver = false;
   $scope.onMouseOver = function() {
@@ -205,18 +206,41 @@ function ResultCtrl($scope, $rootScope, $route, $window, $routeParams, $location
     return elem.length;
   }
 
-  function retryUntilElemIsLoaded(targetElemId, callback) {
-    function retry() {
-      if (!isDOMLoaded(targetElemId)) {
-        $timeout(retry, 10);
-        return;
-      }
+  function cancelRetryRender(targetElemId) {
+    if (retryRenderElements[targetElemId]) {
+      $timeout.cancel(retryRenderElements[targetElemId]);
+      delete retryRenderElements[targetElemId];
+    }
+  }
 
+  /**
+   * Retry until the target element is loaded
+   * @param targetElemId
+   * @param callback
+   * @param nextTick - sometimes need run in next tick
+   */
+  function retryUntilElemIsLoaded(targetElemId, callback, nextTick = false) {
+    cancelRetryRender(targetElemId);
+
+    function callbackFun() {
       const elem = angular.element(`#${targetElemId}`);
       callback(elem);
     }
 
-    $timeout(retry);
+    function retry() {
+      cancelRetryRender(targetElemId);
+      if (!isDOMLoaded(targetElemId)) {
+        retryRenderElements[targetElemId] = $timeout(retry, 16);
+        return;
+      }
+      callbackFun();
+    }
+
+    if(isDOMLoaded(targetElemId) && !nextTick) {
+      callbackFun();
+    } else {
+      retryRenderElements[targetElemId] = $timeout(retry, 16);
+    }
   }
 
   $scope.$on('updateResult', function(event, result, newConfig, paragraphRef, index) {
@@ -712,7 +736,9 @@ function ResultCtrl($scope, $rootScope, $route, $window, $routeParams, $location
     }
 
     const tableElemId = `p${$scope.id}_${graphMode}`;
-    retryUntilElemIsLoaded(tableElemId, afterLoaded);
+
+    // Run the callback in next tick to ensure get the correct size for rendering graph
+    retryUntilElemIsLoaded(tableElemId, afterLoaded, true);
   };
 
   $scope.switchViz = function(newMode) {
@@ -736,14 +762,15 @@ function ResultCtrl($scope, $rootScope, $route, $window, $routeParams, $location
     let newParagraphConfig = angular.copy(paragraph.config);
     newParagraphConfig.results = newParagraphConfig.results || [];
     newParagraphConfig.results[resultIndex] = config;
-    if ($scope.revisionView === true) {
-      // local update without commit
-      updateData({
-        type: $scope.type,
-        data: data,
-      }, newParagraphConfig.results[resultIndex], paragraph, resultIndex);
-      renderResult($scope.type, true);
-    } else {
+
+    // local update without commit
+    updateData({
+      type: $scope.type,
+      data: data,
+    }, newParagraphConfig.results[resultIndex], paragraph, resultIndex);
+    renderResult($scope.type, true);
+
+    if ($scope.revisionView !== true) {
       if (! $scope.viewOnly) {
         return websocketMsgSrv.commitParagraph(paragraph.id, title, text, newParagraphConfig, params);
       }
@@ -752,11 +779,7 @@ function ResultCtrl($scope, $rootScope, $route, $window, $routeParams, $location
 
   $scope.toggleGraphSetting = function() {
     let newConfig = angular.copy($scope.config);
-    if (newConfig.graph.optionOpen) {
-      newConfig.graph.optionOpen = false;
-    } else {
-      newConfig.graph.optionOpen = true;
-    }
+    newConfig.graph.optionOpen = !newConfig.graph.optionOpen;
 
     let newParams = angular.copy(paragraph.settings.params);
     commitParagraphResult(paragraph.title, paragraph.text, newConfig, newParams);

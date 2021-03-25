@@ -26,12 +26,11 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.annotations.SerializedName;
-import com.google.gson.internal.StringMap;
 import com.google.gson.reflect.TypeToken;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonWriter;
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.zeppelin.conf.ZeppelinConfiguration;
 import org.apache.zeppelin.dep.Dependency;
 import org.apache.zeppelin.dep.DependencyResolver;
@@ -40,13 +39,13 @@ import org.apache.zeppelin.display.AngularObjectRegistryListener;
 import org.apache.zeppelin.helium.ApplicationEventListener;
 import org.apache.zeppelin.interpreter.launcher.InterpreterLaunchContext;
 import org.apache.zeppelin.interpreter.launcher.InterpreterLauncher;
-import org.apache.zeppelin.interpreter.lifecycle.NullLifecycleManager;
 import org.apache.zeppelin.interpreter.recovery.NullRecoveryStorage;
 import org.apache.zeppelin.interpreter.recovery.RecoveryStorage;
 import org.apache.zeppelin.interpreter.remote.RemoteAngularObjectRegistry;
 import org.apache.zeppelin.interpreter.remote.RemoteInterpreter;
 import org.apache.zeppelin.interpreter.remote.RemoteInterpreterProcess;
 import org.apache.zeppelin.interpreter.remote.RemoteInterpreterProcessListener;
+import org.apache.zeppelin.notebook.Note;
 import org.apache.zeppelin.plugin.PluginManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,17 +58,18 @@ import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 
-import static org.apache.zeppelin.conf.ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_MAX_POOL_SIZE;
+import static org.apache.zeppelin.conf.ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_CONNECTION_POOL_SIZE;
 import static org.apache.zeppelin.conf.ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_OUTPUT_LIMIT;
 import static org.apache.zeppelin.util.IdHashes.generateId;
 
@@ -133,17 +133,13 @@ public class InterpreterSetting {
   private transient ApplicationEventListener appEventListener;
   private transient DependencyResolver dependencyResolver;
 
-  private transient ZeppelinConfiguration conf = new ZeppelinConfiguration();
+  private transient ZeppelinConfiguration conf = ZeppelinConfiguration.create();
 
-  // TODO(zjffdu) ShellScriptLauncher is the only launcher implemention for now. It could be other
-  // launcher in future when we have other launcher implementation. e.g. third party launcher
-  // service like livy
-  private transient InterpreterLauncher launcher;
-  private transient LifecycleManager lifecycleManager;
   private transient RecoveryStorage recoveryStorage;
   private transient RemoteInterpreterEventServer interpreterEventServer;
 
   public static final String CLUSTER_INTERPRETER_LAUNCHER_NAME = "ClusterInterpreterLauncher";
+
   ///////////////////////////////////////////////////////////////////////////////////////////
 
   /**
@@ -244,11 +240,6 @@ public class InterpreterSetting {
       return this;
     }
 
-    public Builder setLifecycleManager(LifecycleManager lifecycleManager) {
-      interpreterSetting.lifecycleManager = lifecycleManager;
-      return this;
-    }
-
     public Builder setRecoveryStorage(RecoveryStorage recoveryStorage) {
       interpreterSetting.recoveryStorage = recoveryStorage;
       return this;
@@ -270,9 +261,6 @@ public class InterpreterSetting {
 
   void postProcessing() {
     this.id = this.name;
-    if (this.lifecycleManager == null) {
-      this.lifecycleManager = new NullLifecycleManager(conf);
-    }
     if (this.recoveryStorage == null) {
       try {
         this.recoveryStorage = new NullRecoveryStorage(conf, interpreterSettingManager);
@@ -293,7 +281,7 @@ public class InterpreterSetting {
     this.name = o.name;
     this.group = o.group;
     this.properties = convertInterpreterProperties(
-        (Map<String, DefaultInterpreterProperty>) o.getProperties());
+        o.getProperties());
     this.interpreterInfos = new ArrayList<>(o.getInterpreterInfos());
     this.option = InterpreterOption.fromInterpreterOption(o.getOption());
     this.dependencies = new ArrayList<>(o.getDependencies());
@@ -302,9 +290,9 @@ public class InterpreterSetting {
     this.conf = o.getConf();
   }
 
-  private void createLauncher() throws IOException {
-    this.launcher = PluginManager.get().loadInterpreterLauncher(
-        getLauncherPlugin(), recoveryStorage);
+  private InterpreterLauncher createLauncher(Properties properties) throws IOException {
+    return PluginManager.get().loadInterpreterLauncher(
+        getLauncherPlugin(properties), recoveryStorage);
   }
 
   public AngularObjectRegistryListener getAngularObjectRegistryListener() {
@@ -355,11 +343,6 @@ public class InterpreterSetting {
     return this;
   }
 
-  public InterpreterSetting setLifecycleManager(LifecycleManager lifecycleManager) {
-    this.lifecycleManager = lifecycleManager;
-    return this;
-  }
-
   public InterpreterSetting setRecoveryStorage(RecoveryStorage recoveryStorage) {
     this.recoveryStorage = recoveryStorage;
     return this;
@@ -372,9 +355,7 @@ public class InterpreterSetting {
   }
 
   public InterpreterInfo getInterpreterInfo(String name) {
-    Iterator it = this.interpreterInfos.iterator();
-    while (it.hasNext()) {
-      InterpreterInfo info = (InterpreterInfo) it.next();
+    for (InterpreterInfo info :interpreterInfos) {
       if (StringUtils.equals(info.getName(), name)) {
         return info;
       }
@@ -400,10 +381,6 @@ public class InterpreterSetting {
     return recoveryStorage;
   }
 
-  public LifecycleManager getLifecycleManager() {
-    return lifecycleManager;
-  }
-
   public String getId() {
     return id;
   }
@@ -420,16 +397,25 @@ public class InterpreterSetting {
     return group;
   }
 
-  private String getInterpreterGroupId(String user, String noteId) {
+  private String getInterpreterGroupId(ExecutionContext executionContext) {
+    if (!StringUtils.isBlank(executionContext.getInterpreterGroupId())) {
+      return executionContext.getInterpreterGroupId();
+    }
+
+    if (executionContext.isInIsolatedMode()) {
+      return name + "-isolated-" + executionContext.getNoteId() + "-" +
+              executionContext.getStartTime();
+    }
+
     List<String> keys = new ArrayList<>();
     if (option.isExistingProcess) {
       keys.add(Constants.EXISTING_PROCESS);
     } else if (getOption().isIsolated()) {
       if (option.perUserIsolated()) {
-        keys.add(user);
+        keys.add(executionContext.getUser());
       }
       if (option.perNoteIsolated()) {
-        keys.add(noteId);
+        keys.add(executionContext.getNoteId());
       }
     } else {
       keys.add(SHARED_PROCESS);
@@ -439,16 +425,16 @@ public class InterpreterSetting {
     return id + "-" + StringUtils.join(keys, "-");
   }
 
-  private String getInterpreterSessionId(String user, String noteId) {
+  private String getInterpreterSessionId(ExecutionContext executionContext) {
     String key;
     if (option.isExistingProcess()) {
       key = Constants.EXISTING_PROCESS;
     } else if (option.perNoteScoped() && option.perUserScoped()) {
-      key = user + ":" + noteId;
+      key = executionContext.getUser() + ":" + executionContext.getNoteId();
     } else if (option.perUserScoped()) {
-      key = user;
+      key = executionContext.getUser();
     } else if (option.perNoteScoped()) {
-      key = noteId;
+      key = executionContext.getNoteId();
     } else {
       key = SHARED_SESSION;
     }
@@ -457,18 +443,22 @@ public class InterpreterSetting {
   }
 
   public ManagedInterpreterGroup getOrCreateInterpreterGroup(String user, String noteId) {
-    String groupId = getInterpreterGroupId(user, noteId);
+    return getOrCreateInterpreterGroup(getExecutionContext(user, noteId));
+  }
+
+  public ManagedInterpreterGroup getOrCreateInterpreterGroup(ExecutionContext executionContext) {
+    String groupId = getInterpreterGroupId(executionContext);
     try {
       interpreterGroupWriteLock.lock();
       if (!interpreterGroups.containsKey(groupId)) {
-        LOGGER.info("Create InterpreterGroup with groupId: {} for user: {} and note: {}",
-            groupId, user, noteId);
+        LOGGER.info("Create InterpreterGroup with groupId: {} for {}",
+            groupId, executionContext);
         ManagedInterpreterGroup intpGroup = createInterpreterGroup(groupId);
         interpreterGroups.put(groupId, intpGroup);
       }
       return interpreterGroups.get(groupId);
     } finally {
-      interpreterGroupWriteLock.unlock();;
+      interpreterGroupWriteLock.unlock();
     }
   }
 
@@ -482,12 +472,16 @@ public class InterpreterSetting {
   }
 
   public ManagedInterpreterGroup getInterpreterGroup(String user, String noteId) {
-    String groupId = getInterpreterGroupId(user, noteId);
+    return getInterpreterGroup(getExecutionContext(user, noteId));
+  }
+
+  public ManagedInterpreterGroup getInterpreterGroup(ExecutionContext executionContext) {
+    String groupId = getInterpreterGroupId(executionContext);
     try {
       interpreterGroupReadLock.lock();
       return interpreterGroups.get(groupId);
     } finally {
-      interpreterGroupReadLock.unlock();;
+      interpreterGroupReadLock.unlock();
     }
   }
 
@@ -495,10 +489,10 @@ public class InterpreterSetting {
     return interpreterGroups.get(groupId);
   }
 
-  public ArrayList<ManagedInterpreterGroup> getAllInterpreterGroups() {
+  public List<ManagedInterpreterGroup> getAllInterpreterGroups() {
     try {
       interpreterGroupReadLock.lock();
-      return new ArrayList(interpreterGroups.values());
+      return new ArrayList<>(interpreterGroups.values());
     } finally {
       interpreterGroupReadLock.unlock();
     }
@@ -516,16 +510,29 @@ public class InterpreterSetting {
     return DEFAULT_EDITOR;
   }
 
-  void closeInterpreters(String user, String noteId) {
-    ManagedInterpreterGroup interpreterGroup = getInterpreterGroup(user, noteId);
+  public void closeInterpreters(String user, String noteId) {
+    closeInterpreters(getExecutionContext(user, noteId));
+  }
+
+  public void closeInterpreters(String interpreterGroupId) {
+    ExecutionContext executionContext = new ExecutionContext();
+    executionContext.setInterpreterGroupId(interpreterGroupId);
+    closeInterpreters(executionContext);
+  }
+
+  public void closeInterpreters(ExecutionContext executionContext) {
+    ManagedInterpreterGroup interpreterGroup = getInterpreterGroup(executionContext);
     if (interpreterGroup != null) {
-      String sessionId = getInterpreterSessionId(user, noteId);
+      String sessionId = getInterpreterSessionId(executionContext);
       interpreterGroup.close(sessionId);
+      if (interpreterGroup.isEmpty()) {
+        interpreterGroups.remove(interpreterGroup.getId());
+      }
     }
   }
 
   public void close() {
-    LOGGER.info("Close InterpreterSetting: " + name);
+    LOGGER.info("Close InterpreterSetting: {}", name);
     List<Thread> closeThreads = interpreterGroups.values().stream()
             .map(g -> new Thread(g::close, name + "-close"))
             .peek(t -> t.setUncaughtExceptionHandler((th, e) ->
@@ -545,18 +552,65 @@ public class InterpreterSetting {
   }
 
   public void setProperties(Object object) {
-    if (object instanceof StringMap) {
-      StringMap<String> map = (StringMap) properties;
-      Properties newProperties = new Properties();
-      for (String key : map.keySet()) {
-        newProperties.put(key, map.get(key));
+    this.properties = object;
+  }
+
+  /**
+   * This is just to fix the issue of ZEPPELIN-4672.
+   * (TODO zjffdu), we should remove these ungly code after we unify the interpreter properties in
+   * interpreter.json & interpreter-setting.json
+   * @param propertiesInTemplate
+   */
+  public void fillPropertyDescription(Object propertiesInTemplate) {
+    if (propertiesInTemplate instanceof Map) {
+      Map<String, DefaultInterpreterProperty> propertiesInTemplate2 =
+              (Map<String, DefaultInterpreterProperty>) propertiesInTemplate;
+      if (this.properties instanceof Map) {
+        Map<String, InterpreterProperty> newInterpreterProperties = (Map)this.properties;
+        for (Map.Entry<String, InterpreterProperty> entry : newInterpreterProperties.entrySet()) {
+          if (propertiesInTemplate2.containsKey(entry.getKey())) {
+            entry.getValue().setDescription(propertiesInTemplate2.get(entry.getKey()).getDescription());
+          }
+        }
+        this.properties = newInterpreterProperties;
       }
-      this.properties = newProperties;
-    } else {
-      this.properties = object;
     }
   }
 
+  /**
+   * This method will sort the properties by the order defined in template.
+   * It is because when interpreter setting is loaded in interpreter-setting.json, it is
+   * still not in correct order.
+   * @param propertiesInTemplate
+   */
+  public void sortPropertiesByTemplate(Object propertiesInTemplate) {
+    if (propertiesInTemplate instanceof LinkedHashMap) {
+      List<String> sortedKeys = new ArrayList(((LinkedHashMap) propertiesInTemplate).keySet());
+      if (this.properties instanceof LinkedHashMap) {
+        LinkedHashMap<String, InterpreterProperty> unSortedProperties = (LinkedHashMap) this.properties;
+        List<String> keys = new ArrayList(unSortedProperties.keySet());
+        keys.sort((o1, o2) -> {
+          int i1 = sortedKeys.indexOf(o1);
+          int i2 = sortedKeys.indexOf(o2);
+          if (i1 != -1 && i2 != -1) {
+            // If both are present in the template, use natural order of indexes
+            return (i1 - i2);
+          } else {
+            // If one, or both are not in the template, use reverse order, so that missing
+            // elements are placed at the end. Note that if both are missing, we return 0
+            // to full the contract of comparison function.
+            return (i2 - i1);
+          }
+        });
+
+        LinkedHashMap<String, InterpreterProperty> sortedProperties = new LinkedHashMap<>();
+        for (String key : keys) {
+          sortedProperties.put(key, unSortedProperties.get(key));
+        }
+        this.properties = sortedProperties;
+      }
+    }
+  }
 
   public Object getProperties() {
     return properties;
@@ -573,7 +627,7 @@ public class InterpreterSetting {
     Properties jProperties = new Properties();
     Map<String, InterpreterProperty> iProperties = (Map<String, InterpreterProperty>) properties;
     for (Map.Entry<String, InterpreterProperty> entry : iProperties.entrySet()) {
-      if (entry.getValue().getValue() != null) {
+      if (entry.getValue().getValue() != null && StringUtils.isNotBlank(entry.getValue().getValue().toString())) {
         jProperties.setProperty(entry.getKey().trim(),
             entry.getValue().getValue().toString().trim());
       }
@@ -584,9 +638,9 @@ public class InterpreterSetting {
           conf.getInt(ZEPPELIN_INTERPRETER_OUTPUT_LIMIT) + "");
     }
 
-    if (!jProperties.containsKey("zeppelin.interpreter.max.poolsize")) {
-      jProperties.setProperty("zeppelin.interpreter.max.poolsize",
-          conf.getInt(ZEPPELIN_INTERPRETER_MAX_POOL_SIZE) + "");
+    if (!jProperties.containsKey(ZEPPELIN_INTERPRETER_CONNECTION_POOL_SIZE.getVarName())) {
+      jProperties.setProperty(ZEPPELIN_INTERPRETER_CONNECTION_POOL_SIZE.getVarName(),
+          conf.getInt(ZEPPELIN_INTERPRETER_CONNECTION_POOL_SIZE) + "");
     }
 
     String interpreterLocalRepoPath = conf.getInterpreterLocalRepoPath();
@@ -611,7 +665,9 @@ public class InterpreterSetting {
 
   public void setDependencies(List<Dependency> dependencies) {
     this.dependencies = dependencies;
-    loadInterpreterDependencies();
+    if (!this.dependencies.isEmpty()) {
+      loadInterpreterDependencies();
+    }
   }
 
   public InterpreterOption getOption() {
@@ -640,7 +696,9 @@ public class InterpreterSetting {
         this.dependencies.add(dependency);
       }
     }
-    loadInterpreterDependencies();
+    if (!dependencies.isEmpty()) {
+      loadInterpreterDependencies();
+    }
   }
 
   void setInterpreterOption(InterpreterOption interpreterOption) {
@@ -673,7 +731,7 @@ public class InterpreterSetting {
   }
 
   public void setStatus(Status status) {
-    LOGGER.info(String.format("Set interpreter %s status to %s", name, status.name()));
+    LOGGER.info("Set interpreter {} status to {}", name, status);
     this.status = status;
   }
 
@@ -697,19 +755,27 @@ public class InterpreterSetting {
     this.interpreterRunner = interpreterRunner;
   }
 
-  public String getLauncherPlugin() {
+  public String getLauncherPlugin(Properties properties) {
     if (isRunningOnKubernetes()) {
       return "K8sStandardInterpreterLauncher";
     } else if (isRunningOnCluster()) {
       return InterpreterSetting.CLUSTER_INTERPRETER_LAUNCHER_NAME;
-    } if (isRunningOnDocker()) {
+    } else if (isRunningOnDocker()) {
       return "DockerInterpreterLauncher";
     } else {
+      String launcher = properties.getProperty("zeppelin.interpreter.launcher");
+      LOGGER.debug("zeppelin.interpreter.launcher: {}", launcher);
       if (group.equals("spark")) {
         return "SparkInterpreterLauncher";
       } else if (group.equals("flink")) {
+        if ("yarn".equals(launcher)) {
+          return "YarnInterpreterLauncher";
+        }
         return "FlinkInterpreterLauncher";
       } else {
+        if ("yarn".equals(launcher)) {
+          return "YarnInterpreterLauncher";
+        }
         return "StandardInterpreterLauncher";
       }
     }
@@ -748,7 +814,7 @@ public class InterpreterSetting {
     Properties intpProperties = getJavaProperties();
     for (InterpreterInfo info : interpreterInfos) {
       Interpreter interpreter = new RemoteInterpreter(intpProperties, sessionId,
-          info.getClassName(), user, lifecycleManager);
+          info.getClassName(), user);
       if (info.isDefaultInterpreter()) {
         interpreters.add(0, interpreter);
       } else {
@@ -774,9 +840,7 @@ public class InterpreterSetting {
                                                                  String userName,
                                                                  Properties properties)
       throws IOException {
-    if (launcher == null) {
-      createLauncher();
-    }
+    InterpreterLauncher launcher = createLauncher(properties);
     InterpreterLaunchContext launchContext = new
         InterpreterLaunchContext(properties, option, interpreterRunner, userName,
         interpreterGroupId, id, group, name, interpreterEventServer.getPort(), interpreterEventServer.getHost());
@@ -786,26 +850,36 @@ public class InterpreterSetting {
   }
 
   List<Interpreter> getOrCreateSession(String user, String noteId) {
-    ManagedInterpreterGroup interpreterGroup = getOrCreateInterpreterGroup(user, noteId);
-    Preconditions.checkNotNull(interpreterGroup, "No InterpreterGroup existed for user {}, " +
-        "noteId {}", user, noteId);
-    String sessionId = getInterpreterSessionId(user, noteId);
-    return interpreterGroup.getOrCreateSession(user, sessionId);
+    return getOrCreateSession(getExecutionContext(user, noteId));
+  }
+
+  List<Interpreter> getOrCreateSession(ExecutionContext executionContext) {
+    ManagedInterpreterGroup interpreterGroup = getOrCreateInterpreterGroup(executionContext);
+    Preconditions.checkNotNull(interpreterGroup, "No InterpreterGroup existed for {}", executionContext);
+    String sessionId = getInterpreterSessionId(executionContext);
+    return interpreterGroup.getOrCreateSession(executionContext.getUser(), sessionId);
   }
 
   public Interpreter getDefaultInterpreter(String user, String noteId) {
-    return getOrCreateSession(user, noteId).get(0);
+    return getOrCreateSession(getExecutionContext(user, noteId)).get(0);
+  }
+
+  public Interpreter getDefaultInterpreter(ExecutionContext executionContext) {
+    return getOrCreateSession(executionContext).get(0);
   }
 
   public Interpreter getInterpreter(String user, String noteId, String replName) {
-    Preconditions.checkNotNull(noteId, "noteId should be not null");
+    return getInterpreter(getExecutionContext(user, noteId), replName);
+  }
+
+  public Interpreter getInterpreter(ExecutionContext executionContext, String replName) {
     Preconditions.checkNotNull(replName, "replName should be not null");
 
     String className = getInterpreterClassFromInterpreterSetting(replName);
     if (className == null) {
       return null;
     }
-    List<Interpreter> interpreters = getOrCreateSession(user, noteId);
+    List<Interpreter> interpreters = getOrCreateSession(executionContext);
     for (Interpreter interpreter : interpreters) {
       if (className.equals(interpreter.getClassName())) {
         return interpreter;
@@ -871,10 +945,11 @@ public class InterpreterSetting {
     setStatus(Status.DOWNLOADING_DEPENDENCIES);
     setErrorReason(null);
     Thread t = new Thread() {
+      @Override
       public void run() {
         try {
           // dependencies to prevent library conflict
-          File localRepoDir = new File(conf.getInterpreterLocalRepoPath() + "/" + id);
+          File localRepoDir = new File(conf.getInterpreterLocalRepoPath() + '/' + id);
           if (localRepoDir.exists()) {
             try {
               FileUtils.forceDelete(localRepoDir);
@@ -885,11 +960,11 @@ public class InterpreterSetting {
 
           // load dependencies
           List<Dependency> deps = getDependencies();
-          if (deps != null) {
-            LOGGER.info("Start to download dependencies for interpreter: " + name);
+          if (deps != null && !deps.isEmpty()) {
+            LOGGER.info("Start to download dependencies for interpreter: {}", name);
             for (Dependency d : deps) {
               File destDir = new File(
-                  conf.getRelativeDir(ZeppelinConfiguration.ConfVars.ZEPPELIN_DEP_LOCALREPO));
+                  conf.getAbsoluteDir(ZeppelinConfiguration.ConfVars.ZEPPELIN_DEP_LOCALREPO));
 
               if (d.getExclusions() != null) {
                 dependencyResolver.load(d.getGroupArtifactVersion(), d.getExclusions(),
@@ -899,7 +974,7 @@ public class InterpreterSetting {
                     .load(d.getGroupArtifactVersion(), new File(destDir, id));
               }
             }
-            LOGGER.info("Finish downloading dependencies for interpreter: " + name);
+            LOGGER.info("Finish downloading dependencies for interpreter: {}", name);
           }
 
           setStatus(Status.READY);
@@ -911,6 +986,12 @@ public class InterpreterSetting {
               getGroup(), e.getLocalizedMessage()), e);
           setErrorReason(e.getLocalizedMessage());
           setStatus(Status.ERROR);
+        }
+
+        try {
+          interpreterSettingManager.saveToFile();
+        } catch (IOException e) {
+          LOGGER.error("Fail to save interpreter.json", e);
         }
       }
     };
@@ -938,38 +1019,17 @@ public class InterpreterSetting {
 
   // For backward compatibility of interpreter.json format after ZEPPELIN-2403
   static Map<String, InterpreterProperty> convertInterpreterProperties(Object properties) {
-    if (properties != null && properties instanceof StringMap) {
-      Map<String, InterpreterProperty> newProperties = new HashMap<>();
-      StringMap p = (StringMap) properties;
-      for (Object o : p.entrySet()) {
-        Map.Entry entry = (Map.Entry) o;
-        if (!(entry.getValue() instanceof StringMap)) {
-          InterpreterProperty newProperty = new InterpreterProperty(
-              entry.getKey().toString(),
-              entry.getValue(),
-              InterpreterPropertyType.STRING.getValue());
-          newProperties.put(entry.getKey().toString(), newProperty);
-        } else {
-          StringMap stringMap = (StringMap) entry.getValue();
-          InterpreterProperty newProperty = new InterpreterProperty(
-                  entry.getKey().toString(),
-                  stringMap.get("value"),
-                  stringMap.containsKey("type") ? stringMap.get("type").toString() : "string");
-          newProperties.put(newProperty.getName(), newProperty);
-        }
-      }
-      return newProperties;
-
-    } else if (properties instanceof Map) {
+    if (properties instanceof Map) {
       Map<String, Object> dProperties =
           (Map<String, Object>) properties;
-      Map<String, InterpreterProperty> newProperties = new HashMap<>();
-      for (String key : dProperties.keySet()) {
-        Object value = dProperties.get(key);
+      Map<String, InterpreterProperty> newProperties = new LinkedHashMap<>();
+      for (Entry<String, Object> dPropertiesEntry : dProperties.entrySet()) {
+        String key = dPropertiesEntry.getKey();
+        Object value = dPropertiesEntry.getValue();
         if (value instanceof InterpreterProperty) {
           return (Map<String, InterpreterProperty>) properties;
-        } else if (value instanceof StringMap) {
-          StringMap stringMap = (StringMap) value;
+        } else if (value instanceof Map) {
+          Map stringMap = (Map) value;
           InterpreterProperty newProperty = new InterpreterProperty(
               key,
               stringMap.get("value"),
@@ -981,7 +1041,8 @@ public class InterpreterSetting {
           InterpreterProperty property = new InterpreterProperty(
               key,
               dProperty.getValue(),
-              dProperty.getType() != null ? dProperty.getType() : "string"
+              dProperty.getType() != null ? dProperty.getType() : "string",
+              dProperty.getDescription()
               // in case user forget to specify type in interpreter-setting.json
           );
           newProperties.put(key, property);
@@ -999,7 +1060,7 @@ public class InterpreterSetting {
       }
       return newProperties;
     }
-    throw new RuntimeException("Can not convert this type: " + properties.getClass());
+    throw new RuntimeException("Can not convert this type: " + (properties != null ? properties.getClass() : "null"));
   }
 
   public void waitForReady(long timeout) throws InterpreterException {
@@ -1028,6 +1089,9 @@ public class InterpreterSetting {
         return interpreterInfo;
       }
     }
+    if (interpreterInfos.size() == 1) {
+      return interpreterInfos.get(0);
+    }
     throw new Exception("No default interpreter info found in interpreter setting: " + name);
   }
 
@@ -1035,8 +1099,7 @@ public class InterpreterSetting {
     Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
     StringWriter stringWriter = new StringWriter();
-    JsonWriter jsonWriter = new JsonWriter(stringWriter);
-    try {
+    try(JsonWriter jsonWriter = new JsonWriter(stringWriter)){
       // id
       jsonWriter.beginObject();
       jsonWriter.name("id");
@@ -1130,5 +1193,20 @@ public class InterpreterSetting {
     }
 
     return intpSetting;
+  }
+
+  private ExecutionContext getExecutionContext(String user, String noteId) {
+    try {
+      Note note = getInterpreterSettingManager().getNotebook().getNote(noteId);
+      if (note == null) {
+        throw new RuntimeException("No such note: " + noteId);
+      } else {
+        ExecutionContext context = note.getExecutionContext();
+        context.setUser(user);
+        return context;
+      }
+    } catch (IOException e) {
+      throw new RuntimeException("Fail to getExecutionContext", e);
+    }
   }
 }

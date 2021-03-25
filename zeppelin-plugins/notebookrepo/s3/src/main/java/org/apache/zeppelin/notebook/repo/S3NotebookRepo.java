@@ -46,7 +46,9 @@ import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.auth.DefaultAWSCredentialsProviderChain;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3Client;
+import com.amazonaws.services.s3.S3ClientOptions;
 import com.amazonaws.services.s3.AmazonS3EncryptionClient;
+import com.amazonaws.services.s3.model.CannedAccessControlList;
 import com.amazonaws.services.s3.model.CryptoConfiguration;
 import com.amazonaws.services.s3.model.EncryptionMaterialsProvider;
 import com.amazonaws.services.s3.model.GetObjectRequest;
@@ -84,6 +86,7 @@ public class S3NotebookRepo implements NotebookRepo {
   private String bucketName;
   private String user;
   private boolean useServerSideEncryption;
+  private CannedAccessControlList objectCannedAcl;
   private ZeppelinConfiguration conf;
   private String rootFolder;
 
@@ -97,6 +100,9 @@ public class S3NotebookRepo implements NotebookRepo {
     user = conf.getS3User();
     rootFolder = user + "/notebook";
     useServerSideEncryption = conf.isS3ServerSideEncryption();
+    if (StringUtils.isNotBlank(conf.getS3CannedAcl())) {
+        objectCannedAcl = CannedAccessControlList.valueOf(conf.getS3CannedAcl());
+    }
 
     // always use the default provider chain
     AWSCredentialsProvider credentialsProvider = new DefaultAWSCredentialsProviderChain();
@@ -125,6 +131,7 @@ public class S3NotebookRepo implements NotebookRepo {
       // regular S3
       this.s3client = new AmazonS3Client(credentialsProvider, cliConf);
     }
+    s3client.setS3ClientOptions(S3ClientOptions.builder().setPathStyleAccess(conf.isS3PathStyleAccess()).build());
 
     // set S3 endpoint to use
     s3client.setEndpoint(conf.getS3Endpoint());
@@ -196,7 +203,7 @@ public class S3NotebookRepo implements NotebookRepo {
         listObjectsRequest.setMarker(objectListing.getNextMarker());
       } while (objectListing.isTruncated());
     } catch (AmazonClientException ace) {
-      throw new IOException("Unable to list objects in S3: " + ace, ace);
+      throw new IOException("Fail to list objects in S3", ace);
     }
     return notesInfo;
   }
@@ -213,7 +220,7 @@ public class S3NotebookRepo implements NotebookRepo {
           rootFolder + "/" + buildNoteFileName(noteId, notePath)));
     }
     catch (AmazonClientException ace) {
-      throw new IOException("Unable to retrieve object from S3: " + ace, ace);
+      throw new IOException("Fail to get note: " + notePath + " from S3", ace);
     }
     try (InputStream ins = s3object.getObjectContent()) {
       String json = IOUtils.toString(ins, conf.getString(ConfVars.ZEPPELIN_ENCODING));
@@ -237,10 +244,13 @@ public class S3NotebookRepo implements NotebookRepo {
         objectMetadata.setSSEAlgorithm(ObjectMetadata.AES_256_SERVER_SIDE_ENCRYPTION);
         putRequest.setMetadata(objectMetadata);
       }
+      if (objectCannedAcl != null) {
+          putRequest.withCannedAcl(objectCannedAcl);
+      }
       s3client.putObject(putRequest);
     }
     catch (AmazonClientException ace) {
-      throw new IOException("Unable to store note in S3: " + ace, ace);
+      throw new IOException("Fail to store note: " + note.getPath() + " in S3", ace);
     }
     finally {
       FileUtils.deleteQuietly(file);
@@ -257,16 +267,43 @@ public class S3NotebookRepo implements NotebookRepo {
   }
 
   @Override
-  public void move(String folderPath, String newFolderPath, AuthenticationInfo subject) {
-
+  public void move(String folderPath, String newFolderPath, AuthenticationInfo subject) throws IOException {
+    try {
+      ListObjectsRequest listObjectsRequest = new ListObjectsRequest()
+              .withBucketName(bucketName)
+              .withPrefix(rootFolder + folderPath + "/");
+      ObjectListing objectListing;
+      do {
+        objectListing = s3client.listObjects(listObjectsRequest);
+        for (S3ObjectSummary objectSummary : objectListing.getObjectSummaries()) {
+          if (objectSummary.getKey().endsWith(".zpln")) {
+            String noteId = getNoteId(objectSummary.getKey());
+            String notePath = getNotePath(rootFolder, objectSummary.getKey());
+            String newNotePath = newFolderPath + notePath.substring(folderPath.length());
+            move(noteId, notePath, newNotePath, subject);
+          }
+        }
+        listObjectsRequest.setMarker(objectListing.getNextMarker());
+      } while (objectListing.isTruncated());
+    } catch (AmazonClientException ace) {
+      throw new IOException("Fail to move folder: " + folderPath + " to " + newFolderPath  + " in S3" , ace);
+    }
   }
 
   @Override
   public void remove(String noteId, String notePath, AuthenticationInfo subject)
       throws IOException {
-    String key = rootFolder + "/" + buildNoteFileName(noteId, notePath);
+    try {
+      s3client.deleteObject(bucketName, rootFolder + "/" + buildNoteFileName(noteId, notePath));
+    } catch (AmazonClientException ace) {
+      throw new IOException("Fail to remove note: " + notePath + " from S3", ace);
+    }
+  }
+
+  @Override
+  public void remove(String folderPath, AuthenticationInfo subject) throws IOException {
     final ListObjectsRequest listObjectsRequest = new ListObjectsRequest()
-        .withBucketName(bucketName).withPrefix(key);
+            .withBucketName(bucketName).withPrefix(rootFolder + folderPath + "/");
     try {
       ObjectListing objects = s3client.listObjects(listObjectsRequest);
       do {
@@ -275,20 +312,16 @@ public class S3NotebookRepo implements NotebookRepo {
         }
         objects = s3client.listNextBatchOfObjects(objects);
       } while (objects.isTruncated());
+    } catch (AmazonClientException ace) {
+      throw new IOException("Unable to remove folder " + folderPath  + " in S3", ace);
     }
-    catch (AmazonClientException ace) {
-      throw new IOException("Unable to remove note in S3: " + ace, ace);
-    }
-  }
-
-  @Override
-  public void remove(String folderPath, AuthenticationInfo subject) {
-
   }
 
   @Override
   public void close() {
-    //no-op
+    if (s3client != null) {
+      s3client.shutdown();
+    }
   }
 
   @Override

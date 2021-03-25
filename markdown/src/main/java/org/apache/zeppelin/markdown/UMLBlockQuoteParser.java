@@ -49,8 +49,8 @@ public class UMLBlockQuoteParser extends AbstractBlockParser {
   private static final Logger LOGGER = LoggerFactory.getLogger(UMLBlockQuoteParser.class);
 
 
-  private static Pattern YUML_BLOCK_START = Pattern.compile("(%%%)\\s+(.*\\n)");
-  private static Pattern YUML_BLOCK_END = Pattern.compile("%%%(\\s*$)");
+  private static final Pattern YUML_BLOCK_START = Pattern.compile("(%%%)\\s+(.*\\n)");
+  private static final Pattern YUML_BLOCK_END = Pattern.compile("%%%(\\s*$)");
 
   private final UMLBlockQuote block = new UMLBlockQuote();
   private BlockContent content = new BlockContent();
@@ -129,13 +129,14 @@ public class UMLBlockQuoteParser extends AbstractBlockParser {
    * Generic Factory
    */
   public static class Factory implements CustomBlockParserFactory {
+
     @Override
-    public Set<Class<? extends CustomBlockParserFactory>> getAfterDependents() {
+    public Set<Class<?>> getAfterDependents() {
       return null;
     }
 
     @Override
-    public Set<Class<? extends CustomBlockParserFactory>> getBeforeDependents() {
+    public Set<Class<?>> getBeforeDependents() {
       return null;
     }
 

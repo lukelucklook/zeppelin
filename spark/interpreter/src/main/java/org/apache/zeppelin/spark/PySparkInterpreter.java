@@ -17,14 +17,15 @@
 
 package org.apache.zeppelin.spark;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.sql.SQLContext;
-import org.apache.zeppelin.interpreter.BaseZeppelinContext;
+import org.apache.zeppelin.interpreter.ZeppelinContext;
 import org.apache.zeppelin.interpreter.InterpreterContext;
 import org.apache.zeppelin.interpreter.InterpreterException;
 import org.apache.zeppelin.interpreter.InterpreterResult;
+import org.apache.zeppelin.interpreter.util.InterpreterOutputStream;
 import org.apache.zeppelin.python.IPythonInterpreter;
 import org.apache.zeppelin.python.PythonInterpreter;
 import org.slf4j.Logger;
@@ -32,6 +33,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -49,6 +51,7 @@ public class PySparkInterpreter extends PythonInterpreter {
   private static Logger LOGGER = LoggerFactory.getLogger(PySparkInterpreter.class);
 
   private SparkInterpreter sparkInterpreter;
+  private InterpreterContext curIntpContext;
 
   public PySparkInterpreter(Properties property) {
     super(property);
@@ -106,10 +109,8 @@ public class PySparkInterpreter extends PythonInterpreter {
 
   @Override
   public void close() throws InterpreterException {
+    LOGGER.info("Close PySparkInterpreter");
     super.close();
-    if (sparkInterpreter != null) {
-      sparkInterpreter.close();
-    }
   }
 
   @Override
@@ -118,15 +119,27 @@ public class PySparkInterpreter extends PythonInterpreter {
   }
 
   @Override
-  protected BaseZeppelinContext createZeppelinContext() {
+  protected ZeppelinContext createZeppelinContext() {
     return sparkInterpreter.getZeppelinContext();
   }
 
   @Override
   public InterpreterResult interpret(String st, InterpreterContext context)
       throws InterpreterException {
-    Utils.printDeprecateMessage(sparkInterpreter.getSparkVersion(), context, properties);
-    return super.interpret(st, context);
+    curIntpContext = context;
+    // redirect java stdout/stdout to interpreter output. Because pyspark may call java code.
+    PrintStream originalStdout = System.out;
+    PrintStream originalStderr = System.err;
+    try {
+      System.setOut(new PrintStream(context.out));
+      System.setErr(new PrintStream(context.out));
+      Utils.printDeprecateMessage(sparkInterpreter.getSparkVersion(), context, properties);
+
+      return super.interpret(st, context);
+    } finally {
+      System.setOut(originalStdout);
+      System.setErr(originalStderr);
+    }
   }
 
   @Override
@@ -143,6 +156,14 @@ public class PySparkInterpreter extends PythonInterpreter {
     }
     String setPoolStmt = "if 'sc' in locals():\n\tsc.setLocalProperty('spark.scheduler.pool', " + pool + ")";
     callPython(new PythonInterpretRequest(setPoolStmt, false, false));
+
+    callPython(new PythonInterpretRequest("intp.setInterpreterContextInPython()", false, false));
+  }
+
+  // Python side will call InterpreterContext.get() too, but it is in a different thread other than the
+  // java interpreter thread. So we should call this method in python side as well.
+  public void setInterpreterContextInPython() {
+    InterpreterContext.set(curIntpContext);
   }
 
   // Run python shell
@@ -165,7 +186,7 @@ public class PySparkInterpreter extends PythonInterpreter {
     return "python";
   }
 
-  public BaseZeppelinContext getZeppelinContext() {
+  public ZeppelinContext getZeppelinContext() {
     if (sparkInterpreter != null) {
       return sparkInterpreter.getZeppelinContext();
     } else {
@@ -198,7 +219,7 @@ public class PySparkInterpreter extends PythonInterpreter {
     }
   }
 
-  public SQLContext getSQLContext() {
+  public Object getSQLContext() {
     if (sparkInterpreter == null) {
       return null;
     } else {
@@ -208,5 +229,9 @@ public class PySparkInterpreter extends PythonInterpreter {
 
   public boolean isSpark1() {
     return sparkInterpreter.getSparkVersion().getMajorVersion() == 1;
+  }
+
+  public boolean isSpark3() {
+    return sparkInterpreter.getSparkVersion().getMajorVersion() == 3;
   }
 }

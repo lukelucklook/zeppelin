@@ -17,7 +17,7 @@
 
 package org.apache.zeppelin.interpreter;
 
-import org.apache.commons.lang.exception.ExceptionUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.zeppelin.interpreter.remote.RemoteInterpreter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,7 +47,7 @@ public class SessionConfInterpreter extends ConfInterpreter {
       Properties updatedProperties = new Properties();
       updatedProperties.load(new StringReader(st));
       finalProperties.putAll(updatedProperties);
-      LOGGER.debug("Properties for Session: " + sessionId + ": " + finalProperties);
+      LOGGER.debug("Properties for Session: {}:{}", sessionId, finalProperties);
 
       List<Interpreter> interpreters =
           interpreterSetting.getInterpreterGroup(interpreterGroupId).get(sessionId);

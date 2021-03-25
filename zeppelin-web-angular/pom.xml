@@ -18,14 +18,14 @@
   <parent>
     <artifactId>zeppelin</artifactId>
     <groupId>org.apache.zeppelin</groupId>
-    <version>0.9.0-SNAPSHOT</version>
+    <version>0.10.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
 
   <groupId>org.apache.zeppelin</groupId>
   <artifactId>zeppelin-web-angular</artifactId>
   <packaging>war</packaging>
-  <version>0.9.0-SNAPSHOT</version>
+  <version>0.10.0-SNAPSHOT</version>
   <name>Zeppelin: web angular Application</name>
 
   <!-- See https://github.com/eirslett/frontend-maven-plugin/issues/229 -->
@@ -59,7 +59,6 @@
       <plugin>
         <groupId>com.github.eirslett</groupId>
         <artifactId>frontend-maven-plugin</artifactId>
-        <version>${plugin.frontend.version}</version>
         <configuration>
           <nodeDownloadRoot>${plugin.frontend.nodeDownloadRoot}</nodeDownloadRoot>
           <npmDownloadRoot>${plugin.frontend.npmDownloadRoot}</npmDownloadRoot>
@@ -166,7 +165,6 @@
 
       <plugin>
         <artifactId>maven-resources-plugin</artifactId>
-        <version>${plugin.resource.version}</version>
       </plugin>
     </plugins>
   </build>

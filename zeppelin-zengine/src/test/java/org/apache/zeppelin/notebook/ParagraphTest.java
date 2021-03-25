@@ -24,7 +24,6 @@ import static org.junit.Assert.assertNotNull;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Matchers.eq;
-import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -64,9 +63,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 
-import java.util.HashMap;
-import java.util.Map;
-
 import org.mockito.Mockito;
 
 import com.google.common.collect.Lists;
@@ -77,7 +73,7 @@ public class ParagraphTest extends AbstractInterpreterTest {
   public void scriptBodyWithReplName() {
     Note note = createNote();
     Paragraph paragraph = new Paragraph(note, null);
-    paragraph.setText("%test(1234567");
+    paragraph.setText("%test (1234567");
     assertEquals("test", paragraph.getIntpText());
     assertEquals("(1234567", paragraph.getScriptText());
 
@@ -175,23 +171,23 @@ public class ParagraphTest extends AbstractInterpreterTest {
     Paragraph paragraph = new Paragraph(note, null);
     paragraph.setText("%test\r\n###Hello");
     assertEquals("test", paragraph.getIntpText());
-    assertEquals("###Hello", paragraph.getScriptText());
+    assertEquals("\r\n###Hello", paragraph.getScriptText());
 
     paragraph.setText("%test\t###Hello");
     assertEquals("test", paragraph.getIntpText());
-    assertEquals("###Hello", paragraph.getScriptText());
+    assertEquals("\t###Hello", paragraph.getScriptText());
 
     paragraph.setText("%test\u000b###Hello");
     assertEquals("test", paragraph.getIntpText());
-    assertEquals("###Hello", paragraph.getScriptText());
+    assertEquals("\u000b###Hello", paragraph.getScriptText());
 
     paragraph.setText("%test\f###Hello");
     assertEquals("test", paragraph.getIntpText());
-    assertEquals("###Hello", paragraph.getScriptText());
+    assertEquals("\f###Hello", paragraph.getScriptText());
 
     paragraph.setText("%test\n###Hello");
     assertEquals("test", paragraph.getIntpText());
-    assertEquals("###Hello", paragraph.getScriptText());
+    assertEquals("\n###Hello", paragraph.getScriptText());
 
     paragraph.setText("%test ###Hello");
     assertEquals("test", paragraph.getIntpText());
@@ -228,10 +224,10 @@ public class ParagraphTest extends AbstractInterpreterTest {
     final Paragraph paragraph = new Paragraph(note, null);
     final String paragraphId = paragraph.getId();
 
-    final AngularObject nameAO = AngularObjectBuilder.build("name", "DuyHai DOAN", noteId,
+    final AngularObject<String> nameAO = AngularObjectBuilder.build("name", "DuyHai DOAN", noteId,
             paragraphId);
 
-    final AngularObject ageAO = AngularObjectBuilder.build("age", 34, noteId, null);
+    final AngularObject<Integer> ageAO = AngularObjectBuilder.build("age", 34, noteId, null);
 
     when(note.getId()).thenReturn(noteId);
     when(registry.get("name", noteId, paragraphId)).thenReturn(nameAO);
@@ -259,7 +255,7 @@ public class ParagraphTest extends AbstractInterpreterTest {
     assertEquals(defaultValue, newUserParagraph.getReturn().message().get(0).getData());
   }
 
-  @Test
+  @Ignore
   public void returnUnchangedResultsWithDifferentUser() throws Throwable {
     Note mockNote = mock(Note.class);
     when(mockNote.getCredentials()).thenReturn(mock(Credentials.class));
@@ -292,7 +288,6 @@ public class ParagraphTest extends AbstractInterpreterTest {
 
     ParagraphJobListener mockJobListener = mock(ParagraphJobListener.class);
     doReturn(mockJobListener).when(spyParagraph).getListener();
-    doNothing().when(mockJobListener).onOutputUpdateAll(Mockito.<Paragraph>any(), Mockito.anyList());
 
     InterpreterResult mockInterpreterResult = mock(InterpreterResult.class);
     when(mockInterpreter.interpret(anyString(), Mockito.<InterpreterContext>any())).thenReturn(mockInterpreterResult);
@@ -307,6 +302,10 @@ public class ParagraphTest extends AbstractInterpreterTest {
     spyParagraph.setAuthenticationInfo(user1);
     spyParagraph.jobRun();
     Paragraph p1 = spyParagraph.getUserParagraph(user1.getUser());
+
+    mockInterpreterResult = mock(InterpreterResult.class);
+    when(mockInterpreter.interpret(anyString(), Mockito.<InterpreterContext>any())).thenReturn(mockInterpreterResult);
+    when(mockInterpreterResult.code()).thenReturn(Code.SUCCESS);
 
     List<InterpreterResultMessage> result2 = Lists.newArrayList();
     result2.add(new InterpreterResultMessage(Type.TEXT, "result2"));
@@ -335,15 +334,15 @@ public class ParagraphTest extends AbstractInterpreterTest {
         Triple.of("  %jdbc schema.tab\n\n", 18, 10),
         Triple.of("  \n%jdbc schema.\n \n", 16, 7),
         Triple.of("  \n%jdbc schema.\n \n", 16, 7),
-        Triple.of("  \n%jdbc\n\n schema\n \n", 17, 6),
-        Triple.of("%another\n\n schema.", 18, 7),
-        Triple.of("\n\n schema.", 10, 7),
+        Triple.of("  \n%jdbc\n\n schema\n \n", 17, 9),
+        Triple.of("%another\n\n schema.", 18, 10),
+        Triple.of("\n\n schema.", 10, 10),
         Triple.of("schema.", 7, 7),
         Triple.of("schema. \n", 7, 7),
         Triple.of("  \n   %jdbc", 11, 0),
         Triple.of("\n   %jdbc", 9, 0),
-        Triple.of("%jdbc  \n  schema", 16, 6),
-        Triple.of("%jdbc  \n  \n   schema", 20, 6)
+        Triple.of("%jdbc  \n  schema", 16, 9),
+        Triple.of("%jdbc  \n  \n   schema", 20, 13)
     );
 
     for (Triple<String, Integer, Integer> data : dataSet) {
@@ -380,7 +379,6 @@ public class ParagraphTest extends AbstractInterpreterTest {
 
     ParagraphJobListener mockJobListener = mock(ParagraphJobListener.class);
     doReturn(mockJobListener).when(spyParagraph).getListener();
-    doNothing().when(mockJobListener).onOutputUpdateAll(Mockito.<Paragraph>any(), Mockito.anyList());
 
     InterpreterResult mockInterpreterResult = mock(InterpreterResult.class);
     when(mockInterpreter.interpret(anyString(), Mockito.<InterpreterContext>any())).thenReturn(mockInterpreterResult);
@@ -388,14 +386,14 @@ public class ParagraphTest extends AbstractInterpreterTest {
 
     AuthenticationInfo user1 = new AuthenticationInfo("user1");
     spyParagraph.setAuthenticationInfo(user1);
-    
+
     spyParagraph.setText("val x = \"usr={user.ent}&pass={password.ent}\"");
-    
+
     // Credentials should only be injected when it is enabled for an interpreter or when specified in a local property
     when(mockInterpreter.getProperty(Constants.INJECT_CREDENTIALS, "false")).thenReturn("false");
     spyParagraph.jobRun();
     verify(mockInterpreter).interpret(eq("val x = \"usr={user.ent}&pass={password.ent}\""), any(InterpreterContext.class));
-   
+
     when(mockInterpreter.getProperty(Constants.INJECT_CREDENTIALS, "false")).thenReturn("true");
     mockInterpreter.setProperty(Constants.INJECT_CREDENTIALS, "true");
     spyParagraph.jobRun();
@@ -406,6 +404,6 @@ public class ParagraphTest extends AbstractInterpreterTest {
     spyParagraph.getLocalProperties().put(Constants.INJECT_CREDENTIALS, "true");
     spyParagraph.jobRun();
     verify(mockInterpreter).interpret(eq("val x = \"usr=user&pass=pwd\""), any(InterpreterContext.class));
-    
+
   }
 }

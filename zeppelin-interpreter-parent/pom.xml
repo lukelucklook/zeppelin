@@ -23,14 +23,14 @@
   <parent>
     <artifactId>zeppelin</artifactId>
     <groupId>org.apache.zeppelin</groupId>
-    <version>0.9.0-SNAPSHOT</version>
+    <version>0.10.0-SNAPSHOT</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
 
   <groupId>org.apache.zeppelin</groupId>
   <artifactId>zeppelin-interpreter-parent</artifactId>
   <packaging>pom</packaging>
-  <version>0.9.0-SNAPSHOT</version>
+  <version>0.10.0-SNAPSHOT</version>
   <name>Zeppelin: Interpreter Parent</name>
 
   <dependencies>
@@ -58,18 +58,13 @@
     </dependency>
 
     <dependency>
-      <groupId>commons-logging</groupId>
-      <artifactId>commons-logging</artifactId>
+      <groupId>org.slf4j</groupId>
+      <artifactId>jcl-over-slf4j</artifactId>
     </dependency>
 
     <dependency>
       <groupId>org.apache.commons</groupId>
       <artifactId>commons-exec</artifactId>
-    </dependency>
-    
-    <dependency>
-      <groupId>log4j</groupId>
-      <artifactId>log4j</artifactId>
     </dependency>
 
     <dependency>
@@ -103,7 +98,6 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-shade-plugin</artifactId>
-          <version>${plugin.shade.version}</version>
           <configuration>
             <filters>
               <filter>
@@ -158,7 +152,6 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-clean-plugin</artifactId>
-          <version>${plugin.clean.version}</version>
           <configuration>
             <filesets>
               <fileset>

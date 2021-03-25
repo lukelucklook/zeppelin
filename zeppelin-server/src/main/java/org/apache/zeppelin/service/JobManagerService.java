@@ -19,6 +19,8 @@ package org.apache.zeppelin.service;
 
 import javax.inject.Inject;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.zeppelin.conf.ZeppelinConfiguration;
+import org.apache.zeppelin.notebook.AuthorizationService;
 import org.apache.zeppelin.notebook.Note;
 import org.apache.zeppelin.notebook.Notebook;
 import org.apache.zeppelin.notebook.Paragraph;
@@ -30,6 +32,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Service class for JobManager Page
@@ -39,16 +42,25 @@ public class JobManagerService {
   private static final Logger LOGGER = LoggerFactory.getLogger(JobManagerService.class);
 
   private Notebook notebook;
+  private AuthorizationService authorizationService;
+  private ZeppelinConfiguration conf;
 
   @Inject
-  public JobManagerService(Notebook notebook) {
+  public JobManagerService(Notebook notebook,
+                           AuthorizationService authorizationService,
+                           ZeppelinConfiguration conf) {
     this.notebook = notebook;
+    this.authorizationService = authorizationService;
+    this.conf = conf;
   }
 
   public List<NoteJobInfo> getNoteJobInfo(String noteId,
                                           ServiceContext context,
                                           ServiceCallback<List<NoteJobInfo>> callback)
       throws IOException {
+    if (!conf.isJobManagerEnabled()) {
+      return new ArrayList<>();
+    }
     List<NoteJobInfo> notesJobInfo = new ArrayList<>();
     Note jobNote = notebook.getNote(noteId);
     if (jobNote == null) {
@@ -66,14 +78,16 @@ public class JobManagerService {
                                                     ServiceContext context,
                                                     ServiceCallback<List<NoteJobInfo>> callback)
       throws IOException {
-    List<Note> notes = notebook.getAllNotes();
-    List<NoteJobInfo> notesJobInfo = new ArrayList<>();
-    for (Note note : notes) {
-      NoteJobInfo noteJobInfo = new NoteJobInfo(note);
-      if (noteJobInfo.unixTimeLastRun > lastUpdateServerUnixTime) {
-        notesJobInfo.add(noteJobInfo);
-      }
+    if (!conf.isJobManagerEnabled()) {
+      return new ArrayList<>();
     }
+
+    List<NoteJobInfo> notesJobInfo = notebook.getNoteStream()
+            .filter(note -> authorizationService.isOwner(context.getUserAndRoles(), note.getId()))
+            .map(note -> new NoteJobInfo(note))
+            .filter(noteJobInfo -> noteJobInfo.unixTimeLastRun > lastUpdateServerUnixTime)
+            .collect(Collectors.toList());
+
     callback.onSuccess(notesJobInfo, context);
     return notesJobInfo;
   }
@@ -81,6 +95,9 @@ public class JobManagerService {
   public void removeNoteJobInfo(String noteId,
                                 ServiceContext context,
                                 ServiceCallback<List<NoteJobInfo>> callback) throws IOException {
+    if (!conf.isJobManagerEnabled()) {
+      return;
+    }
     List<NoteJobInfo> notesJobInfo = new ArrayList<>();
     notesJobInfo.add(new NoteJobInfo(noteId, true));
     callback.onSuccess(notesJobInfo, context);
@@ -96,7 +113,9 @@ public class JobManagerService {
     }
   }
 
-
+  /**
+   * Job info about one paragraph run
+   */
   public static class ParagraphJobInfo {
     private String id;
     private String name;
@@ -113,10 +132,16 @@ public class JobManagerService {
     }
   }
 
+  /**
+   * Job info about note run, including all the job infos of paragraph run.
+   */
   public static class NoteJobInfo {
     private String noteId;
     private String noteName;
     private String noteType;
+    /**
+     * default interpreterGroup.
+     */
     private String interpreter;
     private boolean isRunningJob;
     private boolean isRemoved = false;

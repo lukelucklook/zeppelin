@@ -24,13 +24,16 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import javax.inject.Inject;
+
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.zeppelin.conf.ZeppelinConfiguration;
 import org.apache.zeppelin.conf.ZeppelinConfiguration.ConfVars;
 import org.apache.zeppelin.display.AngularObject;
@@ -48,6 +51,7 @@ import org.apache.zeppelin.notebook.repo.NotebookRepo;
 import org.apache.zeppelin.notebook.repo.NotebookRepoSync;
 import org.apache.zeppelin.notebook.repo.NotebookRepoWithVersionControl;
 import org.apache.zeppelin.notebook.repo.NotebookRepoWithVersionControl.Revision;
+import org.apache.zeppelin.scheduler.Job;
 import org.apache.zeppelin.search.SearchService;
 import org.apache.zeppelin.user.AuthenticationInfo;
 import org.apache.zeppelin.user.Credentials;
@@ -64,8 +68,8 @@ import org.slf4j.LoggerFactory;
 public class Notebook {
   private static final Logger LOGGER = LoggerFactory.getLogger(Notebook.class);
 
+  private AuthorizationService authorizationService;
   private NoteManager noteManager;
-
   private InterpreterFactory replFactory;
   private InterpreterSettingManager interpreterSettingManager;
   private ZeppelinConfiguration conf;
@@ -83,14 +87,17 @@ public class Notebook {
    */
   public Notebook(
       ZeppelinConfiguration conf,
+      AuthorizationService authorizationService,
       NotebookRepo notebookRepo,
+      NoteManager noteManager,
       InterpreterFactory replFactory,
       InterpreterSettingManager interpreterSettingManager,
       SearchService noteSearchService,
       Credentials credentials)
       throws IOException {
-    this.noteManager = new NoteManager(notebookRepo);
     this.conf = conf;
+    this.authorizationService = authorizationService;
+    this.noteManager = noteManager;
     this.notebookRepo = notebookRepo;
     this.replFactory = replFactory;
     this.interpreterSettingManager = interpreterSettingManager;
@@ -98,15 +105,57 @@ public class Notebook {
     this.interpreterSettingManager.setNotebook(this);
     this.noteSearchService = noteSearchService;
     this.credentials = credentials;
-
     this.noteEventListeners.add(this.noteSearchService);
     this.noteEventListeners.add(this.interpreterSettingManager);
+
+    if (conf.isIndexRebuild()) {
+      noteSearchService.startRebuildIndex(getNoteStream());
+    }
+  }
+
+  public void recoveryIfNecessary() {
+    if (conf.isRecoveryEnabled()) {
+      recoverRunningParagraphs();
+    }
+  }
+
+  private void recoverRunningParagraphs() {
+    Thread thread = new Thread(() -> {
+      getNoteStream().forEach(note -> {
+        try {
+          boolean hasRecoveredParagraph = false;
+          for (Paragraph paragraph : note.getParagraphs()) {
+            if (paragraph.getStatus() == Job.Status.RUNNING) {
+              paragraph.recover();
+              hasRecoveredParagraph = true;
+            }
+          }
+          // unload note to save memory when there's no paragraph recovering.
+          if (!hasRecoveredParagraph) {
+            note.unLoad();
+          }
+        } catch (Exception e) {
+          LOGGER.warn("Fail to recovery note: {}", note.getPath(), e);
+        }
+      });
+    });
+    thread.setName("Recovering-Thread");
+    thread.start();
+    LOGGER.info("Start paragraph recovering thread");
+
+    try {
+      thread.join();
+    } catch (InterruptedException e) {
+      e.printStackTrace();
+    }
   }
 
   @Inject
   public Notebook(
       ZeppelinConfiguration conf,
+      AuthorizationService authorizationService,
       NotebookRepo notebookRepo,
+      NoteManager noteManager,
       InterpreterFactory replFactory,
       InterpreterSettingManager interpreterSettingManager,
       SearchService noteSearchService,
@@ -115,7 +164,9 @@ public class Notebook {
       throws IOException {
     this(
         conf,
+        authorizationService,
         notebookRepo,
+        noteManager,
         replFactory,
         interpreterSettingManager,
         noteSearchService,
@@ -124,6 +175,10 @@ public class Notebook {
       this.noteEventListeners.add(noteEventListener);
     }
     this.paragraphJobListener = (ParagraphJobListener) noteEventListener;
+  }
+
+  public NoteManager getNoteManager() {
+    return noteManager;
   }
 
   /**
@@ -150,6 +205,23 @@ public class Notebook {
   }
 
   /**
+   * Creating new note. defaultInterpreterGroup is not provided, so the global
+   * defaultInterpreterGroup (zeppelin.interpreter.group.default) is used
+   *
+   * @param notePath
+   * @param subject
+   * @param save
+   * @return
+   * @throws IOException
+   */
+  public Note createNote(String notePath,
+                         AuthenticationInfo subject,
+                         boolean save) throws IOException {
+    return createNote(notePath, interpreterSettingManager.getDefaultInterpreterSetting().getName(),
+            subject, save);
+  }
+
+  /**
    * Creating new note.
    *
    * @param notePath
@@ -161,11 +233,32 @@ public class Notebook {
   public Note createNote(String notePath,
                          String defaultInterpreterGroup,
                          AuthenticationInfo subject) throws IOException {
+    return createNote(notePath, defaultInterpreterGroup, subject, true);
+  }
+
+  /**
+   * Creating new note.
+   *
+   * @param notePath
+   * @param defaultInterpreterGroup
+   * @param subject
+   * @return
+   * @throws IOException
+   */
+  public Note createNote(String notePath,
+                         String defaultInterpreterGroup,
+                         AuthenticationInfo subject,
+                         boolean save) throws IOException {
     Note note =
-        new Note(notePath, defaultInterpreterGroup, replFactory, interpreterSettingManager,
-            paragraphJobListener, credentials, noteEventListeners);
-    note.initPermissions(subject);
+            new Note(notePath, defaultInterpreterGroup, replFactory, interpreterSettingManager,
+                    paragraphJobListener, credentials, noteEventListeners);
     noteManager.addNote(note, subject);
+    // init noteMeta
+    authorizationService.createNoteAuth(note.getId(), subject);
+    authorizationService.saveNoteAuth(note.getId(), subject);
+    if (save) {
+      noteManager.saveNote(note, subject);
+    }
     fireNoteCreateEvent(note, subject);
     return note;
   }
@@ -208,6 +301,7 @@ public class Notebook {
     for (Paragraph p : paragraphs) {
       newNote.addCloneParagraph(p, subject);
     }
+    noteManager.saveNote(newNote, subject);
     return newNote;
   }
 
@@ -225,23 +319,36 @@ public class Notebook {
     if (sourceNote == null) {
       throw new IOException("Source note: " + sourceNoteId + " not found");
     }
-    Note newNote = createNote(newNotePath, subject);
+    Note newNote = createNote(newNotePath, subject, false);
     List<Paragraph> paragraphs = sourceNote.getParagraphs();
     for (Paragraph p : paragraphs) {
       newNote.addCloneParagraph(p, subject);
     }
+
+    newNote.setConfig(new HashMap<>(sourceNote.getConfig()));
+    newNote.setInfo(new HashMap<>(sourceNote.getInfo()));
+    newNote.setDefaultInterpreterGroup(sourceNote.getDefaultInterpreterGroup());
+    newNote.setNoteForms(new HashMap<>(sourceNote.getNoteForms()));
+    newNote.setNoteParams(new HashMap<>(sourceNote.getNoteParams()));
+    newNote.setRunning(false);
+
     saveNote(newNote, subject);
+    authorizationService.cloneNoteMeta(newNote.getId(), sourceNoteId, subject);
     return newNote;
   }
 
-  public void removeNote(String noteId, AuthenticationInfo subject) throws IOException {
-    LOGGER.info("Remove note " + noteId);
-    Note note = getNote(noteId);
-    if (note == null) {
-      throw new IOException("Note " + noteId + " not found");
-    }
-    noteManager.removeNote(noteId, subject);
+  public void removeNote(Note note, AuthenticationInfo subject) throws IOException {
+    LOGGER.info("Remove note: {}", note.getId());
+    // Set Remove to true to cancel saving this note
+    note.setRemoved(true);
+    noteManager.removeNote(note.getId(), subject);
+    authorizationService.removeNoteAuth(note.getId());
     fireNoteRemoveEvent(note, subject);
+  }
+
+  public void removeNote(String noteId, AuthenticationInfo subject) throws IOException {
+    Note note = getNote(noteId);
+    removeNote(note, subject);
   }
 
   /**
@@ -252,7 +359,18 @@ public class Notebook {
    * @throws IOException when fail to get it from NotebookRepo.
    */
   public Note getNote(String noteId) throws IOException {
-    Note note = noteManager.getNote(noteId);
+    return getNote(noteId, false);
+  }
+
+  /**
+   * Get note from NotebookRepo and also initialize it with other properties that is not
+   * persistent in NotebookRepo, such as paragraphJobListener.
+   * @param noteId
+   * @return null if note not found.
+   * @throws IOException when fail to get it from NotebookRepo.
+   */
+  public Note getNote(String noteId, boolean reload) throws IOException {
+    Note note = noteManager.getNote(noteId, reload);
     if (note == null) {
       return null;
     }
@@ -269,6 +387,10 @@ public class Notebook {
 
   public void saveNote(Note note, AuthenticationInfo subject) throws IOException {
     noteManager.saveNote(note, subject);
+  }
+
+  public void updateNote(Note note, AuthenticationInfo subject) throws IOException {
+    noteManager.saveNote(note, subject);
     fireNoteUpdateEvent(note, subject);
   }
 
@@ -281,17 +403,17 @@ public class Notebook {
   }
 
   public void moveNote(String noteId, String newNotePath, AuthenticationInfo subject) throws IOException {
-    LOGGER.info("Move note " + noteId + " to " + newNotePath);
+    LOGGER.info("Move note {} to {}", noteId, newNotePath);
     noteManager.moveNote(noteId, newNotePath, subject);
   }
 
   public void moveFolder(String folderPath, String newFolderPath, AuthenticationInfo subject) throws IOException {
-    LOGGER.info("Move folder from " + folderPath + " to " + newFolderPath);
+    LOGGER.info("Move folder from {} to {}", folderPath, newFolderPath);
     noteManager.moveFolder(folderPath, newFolderPath, subject);
   }
 
   public void removeFolder(String folderPath, AuthenticationInfo subject) throws IOException {
-    LOGGER.info("Remove folder " + folderPath);
+    LOGGER.info("Remove folder {}", folderPath);
     // TODO(zjffdu) NotebookRepo.remove is called twice here
     List<Note> notes = noteManager.removeFolder(folderPath, subject);
     for (Note note : notes) {
@@ -370,7 +492,7 @@ public class Notebook {
     try {
       note = noteManager.getNote(id);
     } catch (IOException e) {
-      LOGGER.error("Fail to get note: " + id, e);
+      LOGGER.error("Fail to get note: {}", id, e);
       return null;
     }
     if (note == null) {
@@ -404,8 +526,9 @@ public class Notebook {
     Map<String, List<AngularObject>> savedObjects = note.getAngularObjects();
 
     if (savedObjects != null) {
-      for (String intpGroupName : savedObjects.keySet()) {
-        List<AngularObject> objectList = savedObjects.get(intpGroupName);
+      for (Entry<String, List<AngularObject>> intpGroupNameEntry : savedObjects.entrySet()) {
+        String intpGroupName = intpGroupNameEntry.getKey();
+        List<AngularObject> objectList = intpGroupNameEntry.getValue();
 
         for (AngularObject object : objectList) {
           SnapshotAngularObject snapshot = angularObjectSnapshot.get(object.getName());
@@ -419,11 +542,12 @@ public class Notebook {
 
     note.setNoteEventListeners(this.noteEventListeners);
 
-    for (String name : angularObjectSnapshot.keySet()) {
-      SnapshotAngularObject snapshot = angularObjectSnapshot.get(name);
+    for (Entry<String, SnapshotAngularObject> angularObjectSnapshotEntry : angularObjectSnapshot.entrySet()) {
+      String name = angularObjectSnapshotEntry.getKey();
+      SnapshotAngularObject snapshot = angularObjectSnapshotEntry.getValue();
       List<InterpreterSetting> settings = interpreterSettingManager.get();
       for (InterpreterSetting setting : settings) {
-        InterpreterGroup intpGroup = setting.getInterpreterGroup(subject.getUser(), note.getId());
+        InterpreterGroup intpGroup = setting.getInterpreterGroup(note.getExecutionContext());
         if (intpGroup != null && intpGroup.getId().equals(snapshot.getIntpGroupId())) {
           AngularObjectRegistry registry = intpGroup.getAngularObjectRegistry();
           String noteId = snapshot.getAngularObject().getNoteId();
@@ -489,16 +613,33 @@ public class Notebook {
         .collect(Collectors.toList());
   }
 
-  public List<Note> getAllNotes() {
-    List<Note> noteList = noteManager.getAllNotes();
-    Collections.sort(noteList, Comparator.comparing(Note::getPath));
-    return noteList;
+  public Stream<Note> getNoteStream() {
+    return noteManager.getNotesStream().map(note -> {
+      note.setInterpreterFactory(replFactory);
+      note.setInterpreterSettingManager(interpreterSettingManager);
+      note.setParagraphJobListener(paragraphJobListener);
+      note.setNoteEventListeners(noteEventListeners);
+      note.setCredentials(credentials);
+      for (Paragraph p : note.getParagraphs()) {
+        p.setNote(note);
+        p.setListener(paragraphJobListener);
+      }
+      return note;
+    });
   }
 
+  @VisibleForTesting
   public List<Note> getAllNotes(Function<Note, Boolean> func){
     return getAllNotes().stream()
         .filter(note -> func.apply(note))
         .collect(Collectors.toList());
+  }
+
+  @VisibleForTesting
+  public List<Note> getAllNotes() {
+    List<Note> notes = getNoteStream().collect(Collectors.toList());
+    Collections.sort(notes, Comparator.comparing(Note::getPath));
+    return notes;
   }
 
   public List<NoteInfo> getNotesInfo(Function<String, Boolean> func) {

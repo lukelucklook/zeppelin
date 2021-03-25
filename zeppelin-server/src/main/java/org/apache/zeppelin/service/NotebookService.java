@@ -20,22 +20,25 @@ package org.apache.zeppelin.service;
 
 
 import static org.apache.zeppelin.conf.ZeppelinConfiguration.ConfVars.ZEPPELIN_NOTEBOOK_HOMESCREEN;
+import static org.apache.zeppelin.interpreter.InterpreterResult.Code.ERROR;
+import static org.apache.zeppelin.scheduler.Job.Status.ABORT;
 
 import com.google.common.base.Strings;
 import java.io.IOException;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import javax.inject.Inject;
-import org.apache.commons.lang.StringUtils;
+
+import org.apache.commons.lang3.StringUtils;
 import org.apache.zeppelin.conf.ZeppelinConfiguration;
 import org.apache.zeppelin.display.AngularObject;
 import org.apache.zeppelin.display.AngularObjectRegistry;
-import org.apache.zeppelin.interpreter.Interpreter;
-import org.apache.zeppelin.interpreter.InterpreterNotFoundException;
 import org.apache.zeppelin.interpreter.InterpreterResult;
 import org.apache.zeppelin.interpreter.InterpreterSetting;
 import org.apache.zeppelin.interpreter.thrift.InterpreterCompletion;
@@ -45,10 +48,9 @@ import org.apache.zeppelin.notebook.NoteManager;
 import org.apache.zeppelin.notebook.Notebook;
 import org.apache.zeppelin.notebook.Paragraph;
 import org.apache.zeppelin.notebook.AuthorizationService;
-import org.apache.zeppelin.notebook.ParagraphTextParser;
 import org.apache.zeppelin.notebook.repo.NotebookRepoWithVersionControl;
 import org.apache.zeppelin.notebook.scheduler.SchedulerService;
-import org.apache.zeppelin.notebook.socket.Message;
+import org.apache.zeppelin.common.Message;
 import org.apache.zeppelin.rest.exception.BadRequestException;
 import org.apache.zeppelin.rest.exception.ForbiddenException;
 import org.apache.zeppelin.rest.exception.NoteNotFoundException;
@@ -115,7 +117,14 @@ public class NotebookService {
   public Note getNote(String noteId,
                       ServiceContext context,
                       ServiceCallback<Note> callback) throws IOException {
-    Note note = notebook.getNote(noteId);
+    return getNote(noteId, false, context, callback);
+  }
+
+  public Note getNote(String noteId,
+                      boolean reload,
+                      ServiceContext context,
+                      ServiceCallback<Note> callback) throws IOException {
+    Note note = notebook.getNote(noteId, reload);
     if (note == null) {
       callback.onFailure(new NoteNotFoundException(noteId), context);
       return null;
@@ -133,8 +142,19 @@ public class NotebookService {
   }
 
 
+  /**
+   *
+   * @param notePath
+   * @param defaultInterpreterGroup
+   * @param addingEmptyParagraph
+   * @param context
+   * @param callback
+   * @return
+   * @throws IOException
+   */
   public Note createNote(String notePath,
                          String defaultInterpreterGroup,
+                         boolean addingEmptyParagraph,
                          ServiceContext context,
                          ServiceCallback<Note> callback) throws IOException {
 
@@ -145,9 +165,11 @@ public class NotebookService {
 
     try {
       Note note = notebook.createNote(normalizeNotePath(notePath), defaultInterpreterGroup,
-          context.getAutheInfo());
+          context.getAutheInfo(), false);
       // it's an empty note. so add one paragraph
-      note.addNewParagraph(context.getAutheInfo());
+      if (addingEmptyParagraph) {
+        note.addNewParagraph(context.getAutheInfo());
+      }
       notebook.saveNote(note, context.getAutheInfo());
       callback.onSuccess(note, context);
       return note;
@@ -187,11 +209,12 @@ public class NotebookService {
   public void removeNote(String noteId,
                          ServiceContext context,
                          ServiceCallback<String> callback) throws IOException {
-    if (notebook.getNote(noteId) != null) {
-      if (!checkPermission(noteId, Permission.OWNER, Message.OP.DEL_NOTE, context, callback)) {
+    Note note = notebook.getNote(noteId);
+    if (note != null) {
+      if (!checkPermission(note.getId(), Permission.OWNER, Message.OP.DEL_NOTE, context, callback)) {
         return;
       }
-      notebook.removeNote(noteId, context.getAutheInfo());
+      notebook.removeNote(note, context.getAutheInfo());
       callback.onSuccess("Delete note successfully", context);
     } else {
       callback.onFailure(new NoteNotFoundException(noteId), context);
@@ -277,17 +300,36 @@ public class NotebookService {
     }
   }
 
+  /**
+   * Executes given paragraph with passed paragraph info like noteId, paragraphId, title, text and etc.
+   *
+   * @param noteId
+   * @param paragraphId
+   * @param title
+   * @param text
+   * @param params
+   * @param config
+   * @param failIfDisabled
+   * @param blocking
+   * @param context
+   * @param callback
+   * @return return true only when paragraph execution finished, it could end with succeed or error due to user code.
+   * return false when paragraph execution fails due to zeppelin internal issue.
+   * @throws IOException
+   */
   public boolean runParagraph(String noteId,
                               String paragraphId,
                               String title,
                               String text,
                               Map<String, Object> params,
                               Map<String, Object> config,
+                              String sessionId,
                               boolean failIfDisabled,
                               boolean blocking,
                               ServiceContext context,
                               ServiceCallback<Paragraph> callback) throws IOException {
 
+    LOGGER.info("Start to run paragraph: {} of note: {}", paragraphId, noteId);
     if (!checkPermission(noteId, Permission.RUNNER, Message.OP.RUN_PARAGRAPH, context, callback)) {
       return false;
     }
@@ -309,23 +351,31 @@ public class NotebookService {
     p.setText(text);
     p.setTitle(title);
     p.setAuthenticationInfo(context.getAutheInfo());
-    p.settings.setParams(params);
-    p.setConfig(config);
+    if (params != null && !params.isEmpty()) {
+      p.settings.setParams(params);
+    }
+    if (config != null && !config.isEmpty()) {
+      p.mergeConfig(config);
+    }
 
     if (note.isPersonalizedMode()) {
       p = p.getUserParagraph(context.getAutheInfo().getUser());
       p.setText(text);
       p.setTitle(title);
       p.setAuthenticationInfo(context.getAutheInfo());
-      p.settings.setParams(params);
-      p.setConfig(config);
+      if (params != null && !params.isEmpty()) {
+        p.settings.setParams(params);
+      }
+      if (config != null && !config.isEmpty()) {
+        p.mergeConfig(config);
+      }
     }
 
     try {
       notebook.saveNote(note, context.getAutheInfo());
-      boolean result = note.run(p.getId(), blocking, context.getAutheInfo().getUser());
+      note.run(p.getId(), sessionId, blocking, context.getAutheInfo().getUser());
       callback.onSuccess(p, context);
-      return result;
+      return true;
     } catch (Exception ex) {
       LOGGER.error("Exception from run", ex);
       p.setReturn(new InterpreterResult(InterpreterResult.Code.ERROR, ex.getMessage()), ex);
@@ -336,42 +386,82 @@ public class NotebookService {
     }
   }
 
-  public void runAllParagraphs(String noteId,
-                               List<Map<String, Object>> paragraphs,
-                               ServiceContext context,
-                               ServiceCallback<Paragraph> callback) throws IOException {
+  /**
+   * Run list of paragraphs. This method runs provided paragraphs one by one, synchronously.
+   * When a paragraph fails, subsequent paragraphs are not going to run and this method returns false.
+   * When list of paragraphs provided from argument is null, list of paragraphs stored in the Note will be used.
+   *
+   * @param noteId
+   * @param paragraphs list of paragraphs to run (passed from frontend). Run note directly when it is null.
+   * @param context
+   * @param callback
+   * @return true when all paragraphs successfully run. false when any paragraph fails.
+   * @throws IOException
+   */
+  public boolean runAllParagraphs(String noteId,
+                                  List<Map<String, Object>> paragraphs,
+                                  ServiceContext context,
+                                  ServiceCallback<Paragraph> callback) throws IOException {
     if (!checkPermission(noteId, Permission.RUNNER, Message.OP.RUN_ALL_PARAGRAPHS, context,
         callback)) {
-      return;
+      return false;
     }
 
     Note note = notebook.getNote(noteId);
     if (note == null) {
       callback.onFailure(new NoteNotFoundException(noteId), context);
-      return;
+      return false;
     }
 
-    note.setRunning(true);
-    try {
-      for (Map<String, Object> raw : paragraphs) {
-        String paragraphId = (String) raw.get("id");
-        if (paragraphId == null) {
-          continue;
-        }
-        String text = (String) raw.get("paragraph");
-        String title = (String) raw.get("title");
-        Map<String, Object> params = (Map<String, Object>) raw.get("params");
-        Map<String, Object> config = (Map<String, Object>) raw.get("config");
+    if (paragraphs != null) {
+      // run note via the data passed from frontend
+      try {
+        note.setRunning(true);
+        for (Map<String, Object> raw : paragraphs) {
+          String paragraphId = (String) raw.get("id");
+          if (paragraphId == null) {
+            LOGGER.warn("No id found in paragraph json: {}", raw);
+            continue;
+          }
+          try {
+            String text = (String) raw.get("paragraph");
+            String title = (String) raw.get("title");
+            Map<String, Object> params = (Map<String, Object>) raw.get("params");
+            Map<String, Object> config = (Map<String, Object>) raw.get("config");
 
-        if (!runParagraph(noteId, paragraphId, title, text, params, config, false, true,
-                context, callback)) {
-          // stop execution when one paragraph fails.
-          break;
+            if (!runParagraph(noteId, paragraphId, title, text, params, config, null, false, true,
+                    context, callback)) {
+              // stop execution when one paragraph fails.
+              return false;
+            }
+            // also stop execution when user code in a paragraph fails
+            Paragraph p = note.getParagraph(paragraphId);
+            InterpreterResult result = p.getReturn();
+            if (result != null && result.code() == ERROR) {
+              return false;
+            }
+            if (p.getStatus() == ABORT || p.isAborted()) {
+              return false;
+            }
+          } catch (Exception e) {
+            throw new IOException("Fail to run paragraph json: " + raw, e);
+          }
         }
+      } finally {
+        note.setRunning(false);
       }
-    } finally {
-      note.setRunning(false);
+    } else {
+      try {
+        // run note directly when parameter `paragraphs` is null.
+        note.runAll(context.getAutheInfo(), true, false, new HashMap<>());
+        return true;
+      } catch (Exception e) {
+        LOGGER.warn("Fail to run note: {}", note.getName(), e);
+        return false;
+      }
     }
+
+    return true;
   }
 
   public void cancelParagraph(String noteId,
@@ -509,7 +599,7 @@ public class NotebookService {
 
 
   public void restoreAll(ServiceContext context,
-                         ServiceCallback callback) throws IOException {
+                         ServiceCallback<?> callback) throws IOException {
 
     try {
       notebook.restoreAll(context.getAutheInfo());
@@ -544,18 +634,51 @@ public class NotebookService {
     }
 
     p.settings.setParams(params);
-    p.setConfig(config);
+    p.mergeConfig(config);
     p.setTitle(title);
     p.setText(text);
     if (note.isPersonalizedMode()) {
       p = p.getUserParagraph(context.getAutheInfo().getUser());
       p.settings.setParams(params);
-      p.setConfig(config);
+      p.mergeConfig(config);
       p.setTitle(title);
       p.setText(text);
     }
     notebook.saveNote(note, context.getAutheInfo());
     callback.onSuccess(p, context);
+  }
+
+  public Paragraph getNextSessionParagraph(String noteId,
+                                        int maxParagraph,
+                                        ServiceContext context,
+                                        ServiceCallback<Paragraph> callback) throws IOException {
+    if (!checkPermission(noteId, Permission.WRITER, Message.OP.PARAGRAPH_CLEAR_OUTPUT, context,
+            callback)) {
+      throw new IOException("No privilege to access this note");
+    }
+    Note note = notebook.getNote(noteId);
+    if (note == null) {
+      callback.onFailure(new NoteNotFoundException(noteId), context);
+      throw new IOException("No such note");
+    }
+    synchronized (this) {
+      if (note.getParagraphCount() < maxParagraph) {
+        return note.addNewParagraph(context.getAutheInfo());
+      } else {
+        boolean removed = false;
+        for (int i = 1; i < note.getParagraphCount(); ++i) {
+          if (note.getParagraph(i).getStatus().isCompleted()) {
+            note.removeParagraph(context.getAutheInfo().getUser(), note.getParagraph(i).getId());
+            removed = true;
+            break;
+          }
+        }
+        if (!removed) {
+          throw new IOException("All the paragraphs are not completed, unable to find available paragraph");
+        }
+        return note.addNewParagraph(context.getAutheInfo());
+      }
+    }
   }
 
   public void clearParagraphOutput(String noteId,
@@ -634,7 +757,7 @@ public class NotebookService {
       schedulerService.refreshCron(note.getId());
     }
 
-    notebook.saveNote(note, context.getAutheInfo());
+    notebook.updateNote(note, context.getAutheInfo());
     callback.onSuccess(note, context);
   }
 
@@ -843,7 +966,7 @@ public class NotebookService {
   }
 
   public void getEditorSetting(String noteId,
-                               String magic,
+                               String paragraphText,
                                ServiceContext context,
                                ServiceCallback<Map<String, Object>> callback) throws IOException {
     Note note = notebook.getNote(noteId);
@@ -853,11 +976,10 @@ public class NotebookService {
     }
     try {
       Map<String, Object> settings = notebook.getInterpreterSettingManager().
-          getEditorSetting(magic, noteId);
+          getEditorSetting(paragraphText, noteId);
       callback.onSuccess(settings, context);
     } catch (Exception e) {
       callback.onFailure(new IOException("Fail to getEditorSetting", e), context);
-      return;
     }
   }
 
@@ -883,8 +1005,8 @@ public class NotebookService {
   }
 
   public void moveNoteToTrash(String noteId,
-                                 ServiceContext context,
-                                 ServiceCallback<Note> callback) throws IOException {
+                              ServiceContext context,
+                              ServiceCallback<Note> callback) throws IOException {
     Note note = notebook.getNote(noteId);
     if (note == null) {
       callback.onFailure(new NoteNotFoundException(noteId), context);
@@ -909,7 +1031,7 @@ public class NotebookService {
 
     //TODO(zjffdu) folder permission check
     //TODO(zjffdu) folderPath is relative path, need to fix it in frontend
-    LOGGER.info("Move folder " + folderPath + " to trash");
+    LOGGER.info("Move folder {} to trash", folderPath);
 
     String destFolderPath = "/" + NoteManager.TRASH_FOLDER + "/" + folderPath;
     if (notebook.containsNote(destFolderPath)) {
@@ -1068,7 +1190,8 @@ public class NotebookService {
     // propagate change to (Remote) AngularObjectRegistry
     Note note = notebook.getNote(noteId);
     if (note != null) {
-      List<InterpreterSetting> settings = note.getBindedInterpreterSettings();
+      List<InterpreterSetting> settings =
+              note.getBindedInterpreterSettings(new ArrayList(context.getUserAndRoles()));
       for (InterpreterSetting setting : settings) {
         if (setting.getInterpreterGroup(user, note.getId()) == null) {
           continue;

@@ -19,7 +19,7 @@ package org.apache.zeppelin.spark;
 
 import org.apache.spark.SparkContext;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.zeppelin.interpreter.BaseZeppelinContext;
+import org.apache.zeppelin.interpreter.ZeppelinContext;
 import org.apache.zeppelin.interpreter.InterpreterContext;
 import org.apache.zeppelin.interpreter.InterpreterException;
 import org.apache.zeppelin.interpreter.InterpreterResult;
@@ -31,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 
@@ -72,6 +73,12 @@ public class SparkRInterpreter extends RInterpreter {
     this.jsc = sparkInterpreter.getJavaSparkContext();
     this.sparkVersion = new SparkVersion(sc.version());
     this.isSpark1 = sparkVersion.getMajorVersion() == 1;
+
+    LOGGER.info("SparkRInterpreter: SPARK_HOME={}", sc.getConf().getenv("SPARK_HOME"));
+    Arrays.stream(sc.getConf().getAll())
+            .forEach(x -> LOGGER.info("SparkRInterpreter: conf, {}={}", x._1, x._2));
+    properties.entrySet().stream().forEach(x ->
+            LOGGER.info("SparkRInterpreter: prop, {}={}", x.getKey(), x.getValue()));
 
     ZeppelinRContext.setSparkContext(sc);
     ZeppelinRContext.setJavaSparkContext(jsc);
@@ -116,10 +123,6 @@ public class SparkRInterpreter extends RInterpreter {
   @Override
   public void close() throws InterpreterException {
     super.close();
-    if (this.sparkInterpreter != null) {
-      this.sparkInterpreter.close();
-      this.sparkInterpreter = null;
-    }
   }
 
   @Override
@@ -150,7 +153,7 @@ public class SparkRInterpreter extends RInterpreter {
   }
 
   @Override
-  public BaseZeppelinContext getZeppelinContext() {
+  public ZeppelinContext getZeppelinContext() {
     return sparkInterpreter.getZeppelinContext();
   }
 

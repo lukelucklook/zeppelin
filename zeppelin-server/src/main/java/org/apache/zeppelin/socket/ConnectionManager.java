@@ -22,17 +22,16 @@ import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.zeppelin.conf.ZeppelinConfiguration;
 import org.apache.zeppelin.display.GUI;
 import org.apache.zeppelin.display.Input;
 import org.apache.zeppelin.notebook.Note;
 import org.apache.zeppelin.notebook.NoteInfo;
-import org.apache.zeppelin.notebook.NotebookAuthorization;
 import org.apache.zeppelin.notebook.NotebookImportDeserializer;
 import org.apache.zeppelin.notebook.Paragraph;
 import org.apache.zeppelin.notebook.AuthorizationService;
-import org.apache.zeppelin.notebook.socket.Message;
+import org.apache.zeppelin.common.Message;
 import org.apache.zeppelin.notebook.socket.WatcherMessage;
 import org.apache.zeppelin.user.AuthenticationInfo;
 import org.apache.zeppelin.util.WatcherSecurityKey;
@@ -40,10 +39,12 @@ import org.eclipse.jetty.websocket.api.WebSocketException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.inject.Inject;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -67,9 +68,9 @@ public class ConnectionManager {
 
   final Queue<NotebookSocket> connectedSockets = new ConcurrentLinkedQueue<>();
   // noteId -> connection
-  final Map<String, List<NotebookSocket>> noteSocketMap = new ConcurrentHashMap<>();
+  final Map<String, List<NotebookSocket>> noteSocketMap = new HashMap<>();
   // user -> connection
-  final Map<String, Queue<NotebookSocket>> userSocketMap = new ConcurrentHashMap<>();
+  final Map<String, Queue<NotebookSocket>> userSocketMap = new HashMap<>();
 
   /**
    * This is a special endpoint in the notebook websoket, Every connection in this Queue
@@ -87,8 +88,8 @@ public class ConnectionManager {
 
   private AuthorizationService authorizationService;
 
-  public void setAuthorizationService(
-          AuthorizationService authorizationService) {
+  @Inject
+  public ConnectionManager(AuthorizationService authorizationService) {
     this.authorizationService = authorizationService;
   }
 
@@ -343,7 +344,7 @@ public class ConnectionManager {
     broadcastToWatchers(StringUtils.EMPTY, StringUtils.EMPTY, m);
   }
 
-  public void unicastParagraph(Note note, Paragraph p, String user) {
+  public void unicastParagraph(Note note, Paragraph p, String user, String msgId) {
     if (!note.isPersonalizedMode() || p == null || user == null) {
       return;
     }
@@ -354,8 +355,20 @@ public class ConnectionManager {
     }
 
     for (NotebookSocket conn : userSocketMap.get(user)) {
-      Message m = new Message(Message.OP.PARAGRAPH).put("paragraph", p);
+      Message m = new Message(Message.OP.PARAGRAPH).withMsgId(msgId).put("paragraph", p);
       unicast(m, conn);
+    }
+  }
+
+  public interface UserIterator {
+    public void handleUser(String user, Set<String> userAndRoles);
+  }
+
+  public void forAllUsers(UserIterator iterator) {
+    for (String user : userSocketMap.keySet()) {
+      Set<String> userAndRoles = authorizationService.getRoles(user);
+      userAndRoles.add(user);
+      iterator.handleUser(user, userAndRoles);
     }
   }
 

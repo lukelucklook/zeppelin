@@ -83,7 +83,20 @@ addJarInDir "${ZEPPELIN_HOME}/zeppelin-server/target/lib"
 addJarInDir "${ZEPPELIN_HOME}/zeppelin-web/target/lib"
 addJarInDir "${ZEPPELIN_HOME}/zeppelin-web-angular/target/lib"
 
-CLASSPATH+=":${ZEPPELIN_CLASSPATH}"
+## Add hadoop jars when env USE_HADOOP is true
+if [[ "${USE_HADOOP}" != "false"  ]]; then
+  if [[ -z "${HADOOP_CONF_DIR}" ]]; then
+    echo "Please specify HADOOP_CONF_DIR if USE_HADOOP is true"
+  else
+    ZEPPELIN_CLASSPATH+=":${HADOOP_CONF_DIR}"
+    if ! [ -x "$(command -v hadoop)" ]; then
+      echo 'hadoop command is not in PATH when HADOOP_CONF_DIR is specified.'
+    else
+      ZEPPELIN_CLASSPATH+=":`hadoop classpath`"
+    fi
+  fi
+fi
+
 
 if [[ "${ZEPPELIN_NICENESS}" = "" ]]; then
     export ZEPPELIN_NICENESS=0
@@ -167,9 +180,9 @@ function upstart() {
   # where the service manager starts and stops the process
   initialize_default_directories
 
-  echo "ZEPPELIN_CLASSPATH: ${ZEPPELIN_CLASSPATH_OVERRIDES}:${CLASSPATH}" >> "${ZEPPELIN_OUTFILE}"
+  echo "ZEPPELIN_CLASSPATH: ${ZEPPELIN_CLASSPATH_OVERRIDES}:${ZEPPELIN_CLASSPATH}" >> "${ZEPPELIN_OUTFILE}"
 
-  $ZEPPELIN_RUNNER $JAVA_OPTS -cp $ZEPPELIN_CLASSPATH_OVERRIDES:$CLASSPATH $ZEPPELIN_MAIN >> "${ZEPPELIN_OUTFILE}"
+  $ZEPPELIN_RUNNER $JAVA_OPTS -cp $ZEPPELIN_CLASSPATH_OVERRIDES:$ZEPPELIN_CLASSPATH $ZEPPELIN_MAIN >> "${ZEPPELIN_OUTFILE}"
 }
 
 function start() {
@@ -185,9 +198,9 @@ function start() {
 
   initialize_default_directories
 
-  echo "ZEPPELIN_CLASSPATH: ${ZEPPELIN_CLASSPATH_OVERRIDES}:${CLASSPATH}" >> "${ZEPPELIN_OUTFILE}"
+  echo "ZEPPELIN_CLASSPATH: ${ZEPPELIN_CLASSPATH_OVERRIDES}:${ZEPPELIN_CLASSPATH}" >> "${ZEPPELIN_OUTFILE}"
 
-  nohup nice -n $ZEPPELIN_NICENESS $ZEPPELIN_RUNNER $JAVA_OPTS -cp $ZEPPELIN_CLASSPATH_OVERRIDES:$CLASSPATH $ZEPPELIN_MAIN >> "${ZEPPELIN_OUTFILE}" 2>&1 < /dev/null &
+  nohup nice -n $ZEPPELIN_NICENESS $ZEPPELIN_RUNNER $JAVA_OPTS -cp $ZEPPELIN_CLASSPATH_OVERRIDES:$ZEPPELIN_CLASSPATH $ZEPPELIN_MAIN >> "${ZEPPELIN_OUTFILE}" 2>&1 < /dev/null &
   pid=$!
   if [[ -z "${pid}" ]]; then
     action_msg "${ZEPPELIN_NAME} start" "${SET_ERROR}"

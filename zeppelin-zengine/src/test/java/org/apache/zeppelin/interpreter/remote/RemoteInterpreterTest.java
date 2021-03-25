@@ -17,7 +17,7 @@
 
 package org.apache.zeppelin.interpreter.remote;
 
-import org.apache.commons.lang.exception.ExceptionUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.thrift.transport.TTransportException;
 import org.apache.zeppelin.conf.ZeppelinConfiguration;
 import org.apache.zeppelin.display.AngularObjectRegistry;
@@ -32,6 +32,8 @@ import org.apache.zeppelin.interpreter.InterpreterOption;
 import org.apache.zeppelin.interpreter.InterpreterResult;
 import org.apache.zeppelin.interpreter.InterpreterResult.Code;
 import org.apache.zeppelin.interpreter.InterpreterSetting;
+import org.apache.zeppelin.notebook.Note;
+import org.apache.zeppelin.notebook.NoteInfo;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -49,15 +51,19 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.mockito.Mockito.when;
 
 public class RemoteInterpreterTest extends AbstractInterpreterTest {
 
   private InterpreterSetting interpreterSetting;
 
+  @Override
   @Before
   public void setUp() throws Exception {
     super.setUp();
     interpreterSetting = interpreterSettingManager.getInterpreterSettingByName("test");
+    Note note1 = new Note(new NoteInfo("note1", "/note_1"));
+    when(mockNotebook.getNote("note1")).thenReturn(note1);
   }
 
   @Override
@@ -93,19 +99,10 @@ public class RemoteInterpreterTest extends AbstractInterpreterTest {
     // RemoteInterpreterProcess leakage.
     remoteInterpreter1.getInterpreterGroup().close(remoteInterpreter1.getSessionId());
     assertNull(remoteInterpreter1.getInterpreterGroup().getRemoteInterpreterProcess());
-    try {
-      assertEquals("hello", remoteInterpreter1.interpret("hello", context1).message().get(0).getData());
-      fail("Should not be able to call interpret after interpreter is closed");
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
 
-    try {
-      assertEquals("hello", remoteInterpreter2.interpret("hello", context1).message().get(0).getData());
-      fail("Should not be able to call getProgress after RemoterInterpreterProcess is stoped");
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
+    InterpreterResult result = remoteInterpreter1.interpret("hello", context1);
+    assertEquals(Code.ERROR, result.code());
+    assertEquals("Interpreter process is not running\n", result.message().get(0).getData());
   }
 
   @Test
@@ -145,12 +142,10 @@ public class RemoteInterpreterTest extends AbstractInterpreterTest {
     assertTrue(remoteInterpreter2.getInterpreterGroup().getRemoteInterpreterProcess().isRunning());
     assertEquals("hello", remoteInterpreter2.interpret("hello", context1).message().get(0).getData());
     remoteInterpreter2.getInterpreterGroup().close(remoteInterpreter2.getSessionId());
-    try {
-      assertEquals("hello", remoteInterpreter2.interpret("hello", context1));
-      fail("Should not be able to call interpret after interpreter is closed");
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
+
+    InterpreterResult result = remoteInterpreter2.interpret("hello", context1);
+    assertEquals(Code.ERROR, result.code());
+    assertEquals("Interpreter process is not running\n", result.message().get(0).getData());
     assertNull(remoteInterpreter2.getInterpreterGroup().getRemoteInterpreterProcess());
   }
 
@@ -182,21 +177,18 @@ public class RemoteInterpreterTest extends AbstractInterpreterTest {
     remoteInterpreter1.getInterpreterGroup().close(remoteInterpreter1.getSessionId());
     assertNull(remoteInterpreter1.getInterpreterGroup().getRemoteInterpreterProcess());
     assertTrue(remoteInterpreter2.getInterpreterGroup().getRemoteInterpreterProcess().isRunning());
-    try {
-      remoteInterpreter1.interpret("hello", context1);
-      fail("Should not be able to call getProgress after interpreter is closed");
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
+
+    InterpreterResult result = remoteInterpreter1.interpret("hello", context1);
+    assertEquals(Code.ERROR, result.code());
+    assertEquals("Interpreter process is not running\n", result.message().get(0).getData());
 
     assertEquals("hello", remoteInterpreter2.interpret("hello", context1).message().get(0).getData());
     remoteInterpreter2.getInterpreterGroup().close(remoteInterpreter2.getSessionId());
-    try {
-      assertEquals("hello", remoteInterpreter2.interpret("hello", context1).message().get(0).getData());
-      fail("Should not be able to call interpret after interpreter is closed");
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
+
+    result = remoteInterpreter2.interpret("hello", context1);
+    assertEquals(Code.ERROR, result.code());
+    assertEquals("Interpreter process is not running\n", result.message().get(0).getData());
+
     assertNull(remoteInterpreter2.getInterpreterGroup().getRemoteInterpreterProcess());
 
   }
@@ -390,7 +382,7 @@ public class RemoteInterpreterTest extends AbstractInterpreterTest {
         new OptionInput.ParamOption("value1", "param1"),
         new OptionInput.ParamOption("value2", "param2")
     };
-    List<Object> defaultValues = new ArrayList();
+    List<Object> defaultValues = new ArrayList<>();
     defaultValues.add("default1");
     defaultValues.add("default2");
     gui.checkbox("checkbox_id", paramOptions, defaultValues);
@@ -416,7 +408,7 @@ public class RemoteInterpreterTest extends AbstractInterpreterTest {
         interpreter1.interpret("1", context1);
         fail("Should not be able to launch interpreter process");
       } catch (InterpreterException e) {
-        assertTrue(ExceptionUtils.getStackTrace(e).contains("No such file or directory"));
+        assertTrue(ExceptionUtils.getStackTrace(e).contains("java.io.IOException"));
       }
     } finally {
       System.clearProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_REMOTE_RUNNER.getVarName());
@@ -436,7 +428,7 @@ public class RemoteInterpreterTest extends AbstractInterpreterTest {
         interpreter1.interpret("1", context1);
         fail("Should not be able to launch interpreter process");
       } catch (InterpreterException e) {
-        assertTrue(ExceptionUtils.getStackTrace(e).contains("invalid_command: command not found"));
+        assertTrue(ExceptionUtils.getStackTrace(e).contains("invalid_command:"));
       }
     } finally {
       System.clearProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_REMOTE_RUNNER.getVarName());

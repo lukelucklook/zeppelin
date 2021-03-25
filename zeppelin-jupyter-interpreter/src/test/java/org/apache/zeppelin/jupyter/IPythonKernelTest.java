@@ -276,13 +276,31 @@ public class IPythonKernelTest {
     assertEquals("count", completions.get(0).getValue());
   }
 
+  @Test
+  public void testUpdateOutput() throws IOException, InterpreterException {
+    InterpreterContext context = getInterpreterContext();
+    String st = "import sys\n" +
+            "import time\n" +
+            "from IPython.display import display, clear_output\n" +
+            "for i in range(10):\n" +
+            "    time.sleep(0.25)\n" +
+            "    clear_output(wait=True)\n" +
+            "    print(i)\n" +
+            "    sys.stdout.flush()";
+    InterpreterResult result = interpreter.interpret(st, context);
+    List<InterpreterResultMessage> interpreterResultMessages =
+            context.out.toInterpreterResultMessage();
+    assertEquals(InterpreterResult.Code.SUCCESS, result.code());
+    assertEquals("9\n", interpreterResultMessages.get(0).getData());
+  }
+
   protected InterpreterContext getInterpreterContext() {
     Map<String, String> localProperties = new HashMap<>();
     localProperties.put("kernel", "python");
     return InterpreterContext.builder()
             .setNoteId("noteId")
             .setParagraphId("paragraphId")
-            .setInterpreterOut(new InterpreterOutput(null))
+            .setInterpreterOut(new InterpreterOutput())
             .setIntpEventClient(mock(RemoteInterpreterEventClient.class))
             .setLocalProperties(localProperties)
             .setResourcePool(resourcePool)

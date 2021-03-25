@@ -84,7 +84,6 @@ public class IPythonInterpreterTest extends BasePythonInterpreterTest {
     } catch (IOException e) {
       throw new InterpreterException(e);
     }
-
   }
 
   @Override
@@ -146,7 +145,7 @@ public class IPythonInterpreterTest extends BasePythonInterpreterTest {
     assertEquals(Code.ERROR, result.code());
     output = context.out.toInterpreterResultMessage().get(0);
     assertTrue(output.getData(),
-            output.getData().equals("Ipython kernel has been stopped. Please check logs. "
+            output.getData().contains("Ipython kernel has been stopped. Please check logs. "
         + "It might be because of an out of memory issue."));
   }
 
@@ -296,15 +295,18 @@ public class IPythonInterpreterTest extends BasePythonInterpreterTest {
         "df = pd.DataFrame(np.random.randn(1000, 4), index=idx, columns=list('ABCD')).cumsum()\n" +
         "import hvplot.pandas\n" +
         "df.hvplot()", context);
-    assertEquals(InterpreterResult.Code.SUCCESS, result.code());
+    assertEquals(context.out.toInterpreterResultMessage().get(0).getData(),
+            InterpreterResult.Code.SUCCESS, result.code());
     interpreterResultMessages = context.out.toInterpreterResultMessage();
-    assertEquals(4, interpreterResultMessages.size());
-    assertEquals(InterpreterResult.Type.HTML, interpreterResultMessages.get(0).getType());
+
+    assertEquals(context.out.toString(), 5, interpreterResultMessages.size());
+    // the first message is the warning text message.
     assertEquals(InterpreterResult.Type.HTML, interpreterResultMessages.get(1).getType());
     assertEquals(InterpreterResult.Type.HTML, interpreterResultMessages.get(2).getType());
     assertEquals(InterpreterResult.Type.HTML, interpreterResultMessages.get(3).getType());
+    assertEquals(InterpreterResult.Type.HTML, interpreterResultMessages.get(4).getType());
     // docs_json is the source data of plotting which bokeh would use to render the plotting.
-    assertTrue(interpreterResultMessages.get(3).getData().contains("docs_json"));
+    assertTrue(interpreterResultMessages.get(4).getData().contains("docs_json"));
   }
 
 
@@ -375,7 +377,7 @@ public class IPythonInterpreterTest extends BasePythonInterpreterTest {
     // We ensure that running and auto completion are not hanging.
     InterpreterResult res = interpretFuture.get(20000, TimeUnit.MILLISECONDS);
     List<InterpreterCompletion> autoRes = completionFuture.get(3000, TimeUnit.MILLISECONDS);
-    assertTrue(res.code().name().equals("SUCCESS"));
+    assertEquals("SUCCESS", res.code().name());
     assertTrue(autoRes.size() > 0);
   }
 

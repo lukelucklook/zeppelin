@@ -20,7 +20,6 @@ package org.apache.zeppelin.interpreter.integration;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.zeppelin.interpreter.InterpreterException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,6 +29,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Utility class for downloading spark/flink. This is used for spark/flink integration test.
@@ -47,20 +47,15 @@ public class DownloadUtils {
     }
   }
 
-  public static String downloadSpark(String version) {
-    String hadoopVersion = "2.7";
-    if (version.startsWith("1.")) {
-      // Use hadoop 2.6 for spark 1.x
-      hadoopVersion = "2.6";
-    }
+  public static String downloadSpark(String sparkVersion, String hadoopVersion) {
     String sparkDownloadFolder = downloadFolder + "/spark";
     File targetSparkHomeFolder =
-            new File(sparkDownloadFolder + "/spark-" + version + "-bin-hadoop" + hadoopVersion);
+            new File(sparkDownloadFolder + "/spark-" + sparkVersion + "-bin-hadoop" + hadoopVersion);
     if (targetSparkHomeFolder.exists()) {
       LOGGER.info("Skip to download spark as it is already downloaded.");
       return targetSparkHomeFolder.getAbsolutePath();
     }
-    download("spark", version, "-bin-hadoop" + hadoopVersion + ".tgz");
+    download("spark", sparkVersion, "-bin-hadoop" + hadoopVersion + ".tgz");
     return targetSparkHomeFolder.getAbsolutePath();
   }
 
@@ -109,7 +104,7 @@ public class DownloadUtils {
   private static void download(String project, String version, String postFix, String projectPath) {
     String projectDownloadFolder = downloadFolder + "/" + project;
     try {
-      String preferredMirror = IOUtils.toString(new URL("https://www.apache.org/dyn/closer.lua?preferred=true"));
+      String preferredMirror = IOUtils.toString(new URL("https://www.apache.org/dyn/closer.lua?preferred=true"), StandardCharsets.UTF_8);
       File downloadFile = new File(projectDownloadFolder + "/" + project + "-" + version + postFix);
       String downloadURL = preferredMirror + "/" + projectPath + "/" + project + "-" + version + "/" + project + "-" + version + postFix;
       runShellCommand(new String[]{"wget", downloadURL, "-P", projectDownloadFolder});
@@ -158,6 +153,7 @@ public class DownloadUtils {
       this.is = is;
     }
 
+    @Override
     public void run() {
       try {
         InputStreamReader isr = new InputStreamReader(is);

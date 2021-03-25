@@ -17,7 +17,7 @@ package org.apache.zeppelin.ksql;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.zeppelin.interpreter.Interpreter;
 import org.apache.zeppelin.interpreter.InterpreterContext;
 import org.apache.zeppelin.interpreter.InterpreterException;
@@ -142,10 +142,10 @@ public class KSQLInterpreter extends Interpreter {
 
   @Override
   public void cancel(InterpreterContext context) throws InterpreterException {
-    logger.info("Trying to cancel paragraphId {}", context.getParagraphId());
+    LOGGER.info("Trying to cancel paragraphId {}", context.getParagraphId());
     try {
       ksqlRestService.closeClient(context.getParagraphId());
-      logger.info("Removed");
+      LOGGER.info("Removed");
     } catch (IOException e) {
       throw new RuntimeException(e);
     }

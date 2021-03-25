@@ -44,6 +44,7 @@ public class InterpreterResultMessageOutput extends OutputStream {
   private final InterpreterResultMessageOutputListener flushListener;
   private InterpreterResult.Type type = InterpreterResult.Type.TEXT;
   private boolean firstWrite = true;
+  private boolean enableTableAppend = true;
 
   public InterpreterResultMessageOutput(
       InterpreterResult.Type type,
@@ -62,6 +63,10 @@ public class InterpreterResultMessageOutput extends OutputStream {
     watcher.start();
   }
 
+  public void setEnableTableAppend(boolean enableTableAppend) {
+    this.enableTableAppend = enableTableAppend;
+  }
+
   public InterpreterResult.Type getType() {
     return type;
   }
@@ -74,6 +79,14 @@ public class InterpreterResultMessageOutput extends OutputStream {
   }
 
   public void clear() {
+     clear(true);
+  }
+
+  /**
+   *
+   * @param sendUpdateToFrontend Whether send empty result to frontend to clear the paragraph output
+   */
+  public void clear(boolean sendUpdateToFrontend) {
     synchronized (outList) {
       buffer.reset();
       outList.clear();
@@ -81,7 +94,7 @@ public class InterpreterResultMessageOutput extends OutputStream {
         watcher.clear();
       }
 
-      if (flushListener != null) {
+      if (flushListener != null && sendUpdateToFrontend) {
         flushListener.onUpdate(this);
       }
     }
@@ -232,7 +245,7 @@ public class InterpreterResultMessageOutput extends OutputStream {
   }
 
   public boolean isAppendSupported() {
-    return type == InterpreterResult.Type.TEXT || type == InterpreterResult.Type.TABLE;
+    return type == InterpreterResult.Type.TEXT || (type == InterpreterResult.Type.TABLE && enableTableAppend);
   }
 
   private void copyStream(InputStream in, OutputStream out) throws IOException {

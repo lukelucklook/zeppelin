@@ -79,7 +79,7 @@ The **Cassandra** interpreter accepts the following commands
     </tr>
     <tr>
       <td nowrap>Option commands</td>
-      <td>`@consistency`, `@retryPolicy`, `@fetchSize` ...</td>
+      <td>`@consistency`, `@fetchSize` ...</td>
       <td>Inject runtime options to all statements in the paragraph</td>
     </tr>
     <tr>
@@ -113,9 +113,8 @@ Each statement should be separated by a semi-colon ( **;** ) except the special 
 4. `@consistency`
 5. `@serialConsistency`
 6. `@timestamp`
-7. `@retryPolicy`
-8. `@fetchSize`
-9. `@requestTimeOut`
+7. `@fetchSize`
+8. `@requestTimeOut`
 
 Multi-line statements as well as multiple statements on the same line are also supported as long as they are separated by a semi-colon. Ex:
 
@@ -165,8 +164,8 @@ The complete list of all CQL statements and versions can be found below:
      <td><strong>3.x</strong></td>
      <td>
         <a target="_blank"
-          href="http://docs.datastax.com/en/cql/3.3/cql/cqlIntro.html">
-          http://docs.datastax.com/en/cql/3.3/cql/cqlIntro.html
+          href="https://docs.datastax.com/en/archived/cql/3.3/cql/cqlIntro.html">
+          https://docs.datastax.com/en/archived/cql/3.3/cql/cqlIntro.html
         </a>
      </td>
    </tr>   
@@ -174,26 +173,17 @@ The complete list of all CQL statements and versions can be found below:
      <td><strong>2.2</strong></td>
      <td>
         <a target="_blank"
-          href="http://docs.datastax.com/en/cql/3.3/cql/cqlIntro.html">
-          http://docs.datastax.com/en/cql/3.3/cql/cqlIntro.html
+          href="https://docs.datastax.com/en/archived/cql/3.3/cql/cqlIntro.html">
+          https://docs.datastax.com/en/archived/cql/3.3/cql/cqlIntro.html
         </a>
      </td>
    </tr>
    <tr>
-     <td><strong>2.1 & 2.0</strong></td>
+     <td><strong>2.1</strong></td>
      <td>
         <a target="_blank"
           href="http://docs.datastax.com/en/cql/3.1/cql/cql_intro_c.html">
           http://docs.datastax.com/en/cql/3.1/cql/cql_intro_c.html
-        </a>
-     </td>
-   </tr>
-   <tr>
-     <td><strong>1.2</strong></td>
-     <td>
-        <a target="_blank"
-          href="http://docs.datastax.com/en/cql/3.0/cql/aboutCQL.html">
-          http://docs.datastax.com/en/cql/3.0/cql/aboutCQL.html
         </a>
      </td>
    </tr>
@@ -317,7 +307,7 @@ There is a drop-down menu on the top left corner to expand objects details. On t
   ![Describe Schema]({{BASE_PATH}}/assets/themes/zeppelin/img/docs-img/cassandra-DescribeSchema.png)
 </center>
 
-## Runtime Parameters
+## Runtime Execution Parameters
 
 Sometimes you want to be able to pass runtime query parameters to your statements.
 
@@ -351,11 +341,6 @@ Below is the list of all parameters:
       </td>
    </tr>
    <tr>
-     <td nowrap>Retry Policy</td>
-     <td><strong>@retryPolicy=<em>value</em></strong></td>
-     <td>Apply the given retry policy to all queries in the paragraph</td>
-   </tr>
-   <tr>
      <td nowrap>Fetch Size</td>
      <td><strong>@fetchSize=<em>integer value</em></strong></td>
      <td>Apply the given fetch size to all queries in the paragraph</td>
@@ -387,10 +372,6 @@ Some parameters only accept restricted values:
    <tr>
      <td nowrap>Timestamp</td>
      <td>Any long value</td>
-   </tr>
-   <tr>
-     <td nowrap>Retry Policy</td>
-     <td><strong>DEFAULT, DOWNGRADING_CONSISTENCY, FALLTHROUGH, LOGGING_DEFAULT, LOGGING_DOWNGRADING, LOGGING_FALLTHROUGH</strong></td>
    </tr>
    <tr>
      <td nowrap>Fetch Size</td>
@@ -433,6 +414,104 @@ Some remarks about query parameters:
 > 2. if the **same** query parameter is set many time with different values, the interpreter only take into account the first value
 > 3. each query parameter applies to **all CQL statements** in the same paragraph, unless you override the option using plain CQL text (like forcing timestamp with the `USING` clause)
 > 4. the order of each query parameter with regard to CQL statement does not matter
+
+## Runtime Formatting Parameters
+
+Sometimes you want to be able to format output of your statement. Cassandra interpreter allows to specify different parameters as local properties of the paragraph. Below is the list of all formatting parameters:
+
+<center>
+ <table class="table-configuration">
+   <tr>
+     <th>Parameter</th>
+     <th>Syntax</th>
+     <th>Description</th>
+   </tr>
+   <tr>
+     <td nowrap>Output Format</td>
+     <td><strong>outputFormat=<em>value</em></strong></td>
+     <td>Controls, should we output data as CQL literals, or in human-readable form. Possible values: <strong>cql, human</strong> (default: <strong>human</strong></td>
+   </tr>
+   <tr>
+     <td nowrap>Locale</td>
+     <td><strong>locale=<em>value</em></strong></td>
+     <td>Locale for formatting of numbers & time-related values. Could be any locale supported by JVM (default: <strong>en_US</strong>)</td>
+   </tr>
+   <tr>
+     <td nowrap>Timezone</td>
+     <td><strong>timezone=<em>value</em></strong></td>
+     <td>Timezone for formatting of time-related values. Could be any timezone supported by JVM (default: <strong>UTC</strong>)</td>
+   </tr>
+   <tr>
+     <td nowrap>Float precision</td>
+     <td><strong>floatPrecision=<em>value</em></strong></td>
+     <td>Precision when formatting <tt>float</tt> values. Any positive integer value, or `-1` to show everything</td>
+   </tr>
+   <tr>
+     <td nowrap>Double precision</td>
+     <td><strong>doublePrecision=<em>value</em></strong></td>
+     <td>Precision when formatting <tt>double</tt> values. Any positive integer value, or `-1` to show everything</td>
+   </tr>
+   <tr>
+     <td nowrap>Decimal precision</td>
+     <td><strong>decimalPrecision=<em>value</em></strong></td>
+     <td>Precision when formatting <tt>decimal</tt> values. Any positive integer value, or `-1` to show everything</td>
+   </tr>
+   <tr>
+     <td nowrap>Timestamp Format</td>
+     <td><strong>timestampFormat=<em>value</em></strong></td>
+     <td>Format string for <tt>timestamp</tt> values. Should be valid <a href="https://docs.oracle.com/javase/8/docs/api/java/time/format/DateTimeFormatter.html">DateTimeFormatter</a> pattern</td>
+   </tr>
+   <tr>
+     <td nowrap>Time Format</td>
+     <td><strong>timeFormat=<em>value</em></strong></td>
+     <td>Format string for <tt>time</tt> values. Should be valid <a href="https://docs.oracle.com/javase/8/docs/api/java/time/format/DateTimeFormatter.html">DateTimeFormatter</a> pattern</td>
+   </tr>
+   <tr>
+     <td nowrap>Date Format</td>
+     <td><strong>dateFormat=<em>value</em></strong></td>
+     <td>Format string for <tt>date</tt> values. Should be valid <a href="https://docs.oracle.com/javase/8/docs/api/java/time/format/DateTimeFormatter.html">DateTimeFormatter</a> pattern</td>
+   </tr>
+ </table>
+</center>
+
+
+Some examples:
+
+```sql
+create table if not exists zep.test_format (
+  id int primary key,
+  text text,
+  date date,
+  timestamp timestamp,
+  time time,
+  double double,
+  float float
+);
+
+insert into zep.test_format(id, text, date, timestamp, time, double, float)
+  values (1, 'text', '2019-01-29', '2020-06-16T23:59:59.123Z', '04:05:00.234', 
+  10.0153423453425634653463466346543, 20.0303443); 
+```
+  
+```
+%cassandra(outputFormat=human, locale=de_DE, floatPrecision=2, doublePrecision=4, timeFormat=hh:mma, timestampFormat=MM/dd/yy HH:mm, dateFormat="E, d MMM yy", timezone=Etc/GMT+2)
+select id, double, float, text, date, time, timestamp from zep.test_format;
+```
+
+will output data formatted according to settings, including German locale:
+
+```
+id  double   float  text  date           time     timestamp
+1   10,0153	 20,03  text  Di, 29 Jan 19  04:05AM  06/16/20 21:59
+```
+
+while with `outputFormat=cql`, data is formatted as CQL literals:
+
+```
+id double              float       text    date        time                  timestamp
+1  10.015342345342564  20.030344  'text'  '2019-01-29' '04:05:00.234000000'  '2020-06-17T01:59:59.123+02:00'
+```
+
 
 ## Support for Prepared Statements
 
@@ -494,6 +573,7 @@ Bound values are not mandatory for the **@bind** statement. However if you provi
 * Date values should be enclosed between simple quotes (**'**) and respect the formats (full list is in the [documentation](https://docs.datastax.com/en/cql/3.3/cql/cql_reference/timestamp_type_r.html)):
   1. yyyy-MM-dd HH:MM:ss
   2. yyyy-MM-dd HH:MM:ss.SSS
+  2. yyyy-mm-dd'T'HH:mm:ss.SSSZ
 * **null** is parsed as-is
 * **boolean** (`true`|`false`) are parsed as-is
 * collection values must follow the **[standard CQL syntax]**:
@@ -584,10 +664,9 @@ The **isolated** mode is the most extreme and will create as many JVM/`com.datas
 ## Interpreter Configuration
 
 To configure the **Cassandra** interpreter, go to the **Interpreter** menu and scroll down to change the parameters.
-The **Cassandra** interpreter is using the official **[Cassandra Java Driver]** and most of the parameters are used
-to configure the Java driver
+The **Cassandra** interpreter is using the official **[Datastax Java Driver for Apache Cassandra]®** and most of the parameters are used to configure the Java driver
 
-Below are the configuration parameters and their default values.
+Below are the configuration parameters supported by interpreter and their default values.
 
  <table class="table-configuration">
    <tr>
@@ -644,10 +723,9 @@ Below are the configuration parameters and their default values.
    <tr>
      <td>`cassandra.load.balancing.policy`</td>
      <td>
-        Load balancing policy. Default = `new TokenAwarePolicy(new DCAwareRoundRobinPolicy())`
+        Load balancing policy. Default = `DefaultLoadBalancingPolicy`
         To Specify your own policy, provide the <em>fully qualify class name (FQCN)</em> of your policy.
-        At runtime the interpreter will instantiate the policy using
-        <strong>Class.forName(FQCN)</strong>
+        At runtime the driver will instantiate the policy using class name.
      </td>
      <td>DEFAULT</td>
    </tr>
@@ -657,13 +735,13 @@ Below are the configuration parameters and their default values.
      <td>10</td>
    </tr>
    <tr>
-     <td>`cassandra.pooling.core.connection.per.host.local`</td>
-     <td>Protocol V2 and below default = 2. Protocol V3 and above default = 1</td>
-     <td>2</td>
+     <td>`cassandra.pooling.connection.per.host.local`</td>
+     <td>Protocol V3 and above default = 1</td>
+     <td>1</td>
    </tr>
    <tr>
-     <td>`cassandra.pooling.core.connection.per.host.remote`</td>
-     <td>Protocol V2 and below default = 1. Protocol V3 and above default = 1</td>
+     <td>`cassandra.pooling.connection.per.host.remote`</td>
+     <td>Protocol V3 and above default = 1</td>
      <td>1</td>
    </tr>
    <tr>
@@ -672,39 +750,9 @@ Below are the configuration parameters and their default values.
      <td>30</td>
    </tr>
    <tr>
-     <td>`cassandra.pooling.idle.timeout.seconds`</td>
-     <td>Cassandra idle time out in seconds</td>
-     <td>120</td>
-   </tr>
-   <tr>
-     <td>`cassandra.pooling.max.connection.per.host.local`</td>
-     <td>Protocol V2 and below default = 8. Protocol V3 and above default = 1</td>
-     <td>8</td>
-   </tr>
-   <tr>
-     <td>`cassandra.pooling.max.connection.per.host.remote`</td>
-     <td>Protocol V2 and below default = 2. Protocol V3 and above default = 1</td>
-     <td>2</td>
-   </tr>
-   <tr>
-     <td>`cassandra.pooling.max.request.per.connection.local`</td>
-     <td>Protocol V2 and below default = 128. Protocol V3 and above default = 1024</td>
-     <td>128</td>
-   </tr>
-   <tr>
-     <td>`cassandra.pooling.max.request.per.connection.remote`</td>
-     <td>Protocol V2 and below default = 128. Protocol V3 and above default = 256</td>
-     <td>128</td>
-   </tr>
-   <tr>
-     <td>`cassandra.pooling.new.connection.threshold.local`</td>
-     <td>Protocol V2 and below default = 100. Protocol V3 and above default = 800</td>
-     <td>100</td>
-   </tr>
-   <tr>
-     <td>`cassandra.pooling.new.connection.threshold.remote`</td>
-     <td>Protocol V2 and below default = 100. Protocol V3 and above default = 200</td>
-     <td>100</td>
+     <td>`cassandra.pooling.max.request.per.connection`</td>
+     <td>Protocol V3 and above default = 1024</td>
+     <td>1024</td>
    </tr>
    <tr>
      <td>`cassandra.pooling.pool.timeout.millisecs`</td>
@@ -713,8 +761,8 @@ Below are the configuration parameters and their default values.
    </tr>
    <tr>
      <td>`cassandra.protocol.version`</td>
-     <td>Cassandra binary protocol version</td>
-     <td>4</td>
+     <td>Cassandra binary protocol version (`V3`, `V4`, ...)</td>
+     <td>`DEFAULT` (detected automatically)</td>
    </tr>
    <tr>
      <td>cassandra.query.default.consistency</td>
@@ -743,10 +791,9 @@ Below are the configuration parameters and their default values.
      <td>`cassandra.reconnection.policy`</td>
      <td>
         Cassandra Reconnection Policy.
-        Default = `new ExponentialReconnectionPolicy(1000, 10 * 60 * 1000)`
+        Default = `ExponentialReconnectionPolicy`
         To Specify your own policy, provide the <em>fully qualify class name (FQCN)</em> of your policy.
-        At runtime the interpreter will instantiate the policy using
-        <strong>Class.forName(FQCN)</strong>
+        At runtime the driver will instantiate the policy using class name.
      </td>
      <td>DEFAULT</td>
    </tr>
@@ -754,10 +801,9 @@ Below are the configuration parameters and their default values.
      <td>`cassandra.retry.policy`</td>
      <td>
         Cassandra Retry Policy.
-        Default = `DefaultRetryPolicy.INSTANCE`
+        Default = `DefaultRetryPolicy`
         To Specify your own policy, provide the <em>fully qualify class name (FQCN)</em> of your policy.
-        At runtime the interpreter will instantiate the policy using
-        <strong>Class.forName(FQCN)</strong>
+        At runtime the driver will instantiate the policy using class name.
      </td>
      <td>DEFAULT</td>
    </tr>
@@ -780,10 +826,9 @@ Below are the configuration parameters and their default values.
      <td>`cassandra.speculative.execution.policy`</td>
      <td>
         Cassandra Speculative Execution Policy.
-        Default = `NoSpeculativeExecutionPolicy.INSTANCE`
+        Default = `NoSpeculativeExecutionPolicy`
         To Specify your own policy, provide the <em>fully qualify class name (FQCN)</em> of your policy.
-        At runtime the interpreter will instantiate the policy using
-        <strong>Class.forName(FQCN)</strong>
+        At runtime the driver will instantiate the policy using class name.
      </td>
      <td>DEFAULT</td>
    </tr>
@@ -810,9 +855,66 @@ Below are the configuration parameters and their default values.
      </td>
      <td></td>
    </tr>
+   <tr>
+     <td>`cassandra.format.output`</td>
+     <td>Output format for data - strict CQL (`cql`), or human-readable (`human`)</td>
+     <td>`human`</td>
+   </tr>
+   <tr>
+     <td>`cassandra.format.locale`</td>
+     <td>Which locale to use for output (any locale supported by JVM could be specified)</td>
+     <td>`en_US`</td>
+   </tr>
+   <tr>
+     <td>`cassandra.format.timezone`</td>
+     <td>For which timezone format time/date-related types (any timezone supported by JVM could be specified)</td>
+     <td>`UTC`</td>
+   </tr>
+   <tr>
+     <td>`cassandra.format.timestamp`</td>
+     <td>Format string for `timestamp` columns (any valid <a href="https://docs.oracle.com/javase/8/docs/api/java/time/format/DateTimeFormatter.html">DateTimeFormatter</a> pattern could be used)</td>
+     <td>`yyyy-MM-dd'T'HH:mm:ss.SSSXXX`</td>
+   </tr>
+   <tr>
+     <td>`cassandra.format.time`</td>
+     <td>Format string for `time` columns (any valid <a href="https://docs.oracle.com/javase/8/docs/api/java/time/format/DateTimeFormatter.html">DateTimeFormatter</a> pattern could be used)</td>
+     <td>`HH:mm:ss.SSS`</td>
+   </tr>
+   <tr>
+     <td>`cassandra.format.date`</td>
+     <td>Format string for `date` columns (any valid <a href="https://docs.oracle.com/javase/8/docs/api/java/time/format/DateTimeFormatter.html">DateTimeFormatter</a> pattern could be used)</td>
+     <td>`yyyy-MM-dd`</td>
+   </tr>
+   <tr>
+     <td>`cassandra.format.float_precision`</td>
+     <td>Precision when formatting values of `float` type</td>
+     <td>`5`</td>
+   </tr>
+   <tr>
+     <td>`cassandra.format.double_precision`</td>
+     <td>Precision when formatting values of `double` type</td>
+     <td>`12`</td>
+   </tr>
+   <tr>
+     <td>`cassandra.format.decimal_precision`</td>
+     <td>Precision when formatting values of `decimal` type</td>
+     <td>`-1` (show everything)</td>
+   </tr>
  </table>
 
+Besides these parameters, it's also possible to set other driver parameters by adding them into interpreter configuration.  The configuration key should have full form with `datastax-java-driver` prefix, as [described in documentation](https://docs.datastax.com/en/developer/java-driver/latest/manual/core/configuration/).  For example, to specify 5 seconds request timeout, you can use `datastax-java-driver.basic.request.timeout` with value of `5 seconds`.  Full list of available configuration options is [available in documentation](https://docs.datastax.com/en/developer/java-driver/latest/manual/core/configuration/reference/).  Additional options may override the options that are specified by the interpreter's configuration parameters.
+
 ## Change Log
+
+**4.0** _(Zeppelin {{ site.ZEPPELIN_VERSION }})_ :
+
+* Refactor to use unified Java driver 4.7 ([ZEPPELIN-4378](https://issues.apache.org/jira/browse/ZEPPELIN-4378):
+  * changes in configuration were necessary, as new driver has different architecture, and configuration options
+  * interpreter got support for DSE-specific data types, and other extensions
+  * support for `@retryPolicy` is removed, as only single retry policy is shipped with driver
+  * allow to specify any configuration option of Java driver
+  * dropped support for Cassandra 1.2 & 2.0, that isn't supported by driver anymore
+* added support for formatting options, both interpreter & cell level
 
 **3.1** _(Zeppelin {{ site.ZEPPELIN_VERSION }})_ :
 
@@ -844,14 +946,12 @@ Below are the configuration parameters and their default values.
 
 ## Bugs & Contacts
 
- If you encounter a bug for this interpreter, please create a **[JIRA]** ticket and ping me on Twitter
- at **[@doanduyhai]**
+ If you encounter a bug for this interpreter, please create a **[JIRA]** ticket.
 
-[Cassandra Java Driver]: https://github.com/datastax/java-driver
+[Datastax Java Driver for Apache Cassandra]: https://docs.datastax.com/en/developer/java-driver/latest/
 [standard CQL syntax]: http://docs.datastax.com/en/cql/3.1/cql/cql_using/use_collections_c.html
 [Tuple CQL syntax]: http://docs.datastax.com/en/cql/3.1/cql/cql_reference/tupleType.html
 [UDT CQL syntax]: http://docs.datastax.com/en/cql/3.1/cql/cql_using/cqlUseUDT.html
 [Zeppelin Dynamic Form](../usage/dynamic_form/intro.html)
 [Interpreter Binding Mode](../usage/interpreter/interpreter_binding_mode.html)
-[JIRA]: https://issues.apache.org/jira/browse/ZEPPELIN-382?jql=project%20%3D%20ZEPPELIN
-[@doanduyhai]: https://twitter.com/doanduyhai
+[JIRA]: https://issues.apache.org/jira/browse/ZEPPELIN

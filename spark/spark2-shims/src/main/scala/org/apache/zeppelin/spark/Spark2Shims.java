@@ -29,6 +29,8 @@ import org.apache.spark.sql.catalyst.expressions.GenericRow;
 import org.apache.spark.sql.types.StructType;
 import org.apache.zeppelin.interpreter.InterpreterContext;
 import org.apache.zeppelin.interpreter.ResultMessages;
+import org.apache.zeppelin.interpreter.SingleRowInterpreterResult;
+import org.apache.zeppelin.tabledata.TableDataUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -60,7 +62,7 @@ public class Spark2Shims extends SparkShims {
   }
 
   @Override
-  public String showDataFrame(Object obj, int maxResult) {
+  public String showDataFrame(Object obj, int maxResult, InterpreterContext context) {
     if (obj instanceof Dataset) {
       Dataset<Row> df = ((Dataset) obj).toDF();
       String[] columns = df.columns();
@@ -70,9 +72,18 @@ public class Spark2Shims extends SparkShims {
       }
       // fetch maxResult+1 rows so that we can check whether it is larger than zeppelin.spark.maxResult
       List<Row> rows = df.takeAsList(maxResult + 1);
+      String template = context.getLocalProperties().get("template");
+      if (!StringUtils.isBlank(template)) {
+        if (rows.size() >= 1) {
+          return new SingleRowInterpreterResult(sparkRowToList(rows.get(0)), template, context).toHtml();
+        } else {
+          return "";
+        }
+      }
+
       StringBuilder msg = new StringBuilder();
       msg.append("\n%table ");
-      msg.append(StringUtils.join(columns, "\t"));
+      msg.append(StringUtils.join(TableDataUtils.normalizeColumns(columns), "\t"));
       msg.append("\n");
       boolean isLargerThanMaxResult = rows.size() > maxResult;
       if (isLargerThanMaxResult) {
@@ -80,7 +91,7 @@ public class Spark2Shims extends SparkShims {
       }
       for (Row row : rows) {
         for (int i = 0; i < row.size(); ++i) {
-          msg.append(row.get(i));
+          msg.append(TableDataUtils.normalizeColumn(row.get(i)));
           if (i != row.size() -1) {
             msg.append("\t");
           }
@@ -98,6 +109,14 @@ public class Spark2Shims extends SparkShims {
     } else {
       return obj.toString();
     }
+  }
+
+  private List sparkRowToList(Row row) {
+    List list = new ArrayList();
+    for (int i = 0; i< row.size(); i++) {
+      list.add(row.get(i));
+    }
+    return list;
   }
 
   @Override

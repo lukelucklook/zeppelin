@@ -18,8 +18,8 @@
 package org.apache.zeppelin.r;
 
 import org.apache.commons.io.IOUtils;
-import org.apache.commons.lang.exception.ExceptionUtils;
-import org.apache.zeppelin.interpreter.BaseZeppelinContext;
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.zeppelin.interpreter.ZeppelinContext;
 import org.apache.zeppelin.interpreter.InterpreterContext;
 import org.apache.zeppelin.interpreter.InterpreterException;
 import org.apache.zeppelin.interpreter.InterpreterResult;
@@ -36,6 +36,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Properties;
 
@@ -54,7 +55,7 @@ public class IRInterpreter extends JupyterKernelInterpreter {
   private SparkRBackend sparkRBackend;
 
   public IRInterpreter(Properties properties) {
-    super(properties);
+    super("ir", properties);
   }
 
   /**
@@ -126,14 +127,14 @@ public class IRInterpreter extends JupyterKernelInterpreter {
     String timeout = getProperty("spark.r.backendConnectionTimeout", "6000");
     InputStream input =
             getClass().getClassLoader().getResourceAsStream("R/zeppelin_isparkr.R");
-    String code = IOUtils.toString(input)
+    String code = IOUtils.toString(input, StandardCharsets.UTF_8)
             .replace("${Port}", sparkRBackend.port() + "")
             .replace("${version}", sparkVersion() + "")
             .replace("${libPath}", "\"" + SparkRUtils.getSparkRLib(isSparkSupported()) + "\"")
             .replace("${timeout}", timeout)
             .replace("${isSparkSupported}", "\"" + isSparkSupported() + "\"")
             .replace("${authSecret}", "\"" + sparkRBackend.socketSecret() + "\"");
-    LOGGER.debug("Init IRKernel via script:\n" + code);
+    LOGGER.debug("Init IRKernel via script:\n{}", code);
     ExecuteResponse response = jupyterKernelClient.block_execute(ExecuteRequest.newBuilder()
             .setCode(code).build());
     if (response.getStatus() != ExecuteStatus.SUCCESS) {
@@ -147,7 +148,7 @@ public class IRInterpreter extends JupyterKernelInterpreter {
   }
 
   @Override
-  public BaseZeppelinContext buildZeppelinContext() {
+  public ZeppelinContext buildZeppelinContext() {
     return new RZeppelinContext(getInterpreterGroup().getInterpreterHookRegistry(),
             Integer.parseInt(getProperty("zeppelin.r.maxResult", "1000")));
   }
@@ -155,44 +156,24 @@ public class IRInterpreter extends JupyterKernelInterpreter {
   public InterpreterResult shinyUI(String st,
                                    InterpreterContext context) throws InterpreterException {
     File uiFile = new File(shinyAppFolder, "ui.R");
-    FileWriter writer = null;
-    try {
-      writer = new FileWriter(uiFile);
+    try (FileWriter writer = new FileWriter(uiFile)){
       IOUtils.copy(new StringReader(st), writer);
       return new InterpreterResult(InterpreterResult.Code.SUCCESS, "Write ui.R to "
               + shinyAppFolder.getAbsolutePath() + " successfully.");
     } catch (IOException e) {
       throw new InterpreterException("Fail to write shiny file ui.R", e);
-    } finally {
-      if (writer != null) {
-        try {
-          writer.close();
-        } catch (IOException e) {
-          throw new InterpreterException(e);
-        }
-      }
     }
   }
 
   public InterpreterResult shinyServer(String st,
                                        InterpreterContext context) throws InterpreterException {
     File serverFile = new File(shinyAppFolder, "server.R");
-    FileWriter writer = null;
-    try {
-      writer = new FileWriter(serverFile);
+    try (FileWriter writer = new FileWriter(serverFile);){
       IOUtils.copy(new StringReader(st), writer);
       return new InterpreterResult(InterpreterResult.Code.SUCCESS, "Write server.R to "
               + shinyAppFolder.getAbsolutePath() + " successfully.");
     } catch (IOException e) {
       throw new InterpreterException("Fail to write shiny file server.R", e);
-    } finally {
-      if (writer != null) {
-        try {
-          writer.close();
-        } catch (IOException e) {
-          throw new InterpreterException(e);
-        }
-      }
     }
   }
 
@@ -208,7 +189,7 @@ public class IRInterpreter extends JupyterKernelInterpreter {
       builder.append("runApp(appDir='" + shinyAppFolder.getAbsolutePath() + "', " +
               "port=" + port + ", host='" + host + "', launch.browser=FALSE)");
       // shiny app will launch and block there until user cancel the paragraph.
-      LOGGER.info("Run shiny app code: " + builder.toString());
+      LOGGER.info("Run shiny app code: {}", builder);
       return internalInterpret(builder.toString(), context);
     } finally {
       getKernelProcessLauncher().setRedirectedContext(null);

@@ -22,11 +22,13 @@ import org.apache.zeppelin.conf.ZeppelinConfiguration;
 import org.apache.zeppelin.dep.Dependency;
 import org.apache.zeppelin.display.AngularObjectRegistryListener;
 import org.apache.zeppelin.helium.ApplicationEventListener;
-import org.apache.zeppelin.interpreter.lifecycle.NullLifecycleManager;
 import org.apache.zeppelin.interpreter.remote.RemoteInterpreterProcessListener;
+import org.apache.zeppelin.notebook.Note;
+import org.apache.zeppelin.notebook.NoteInfo;
+import org.junit.Before;
 import org.junit.Test;
-import org.sonatype.aether.RepositoryException;
-import org.sonatype.aether.repository.RemoteRepository;
+import org.eclipse.aether.RepositoryException;
+import org.eclipse.aether.repository.RemoteRepository;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -36,13 +38,25 @@ import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 
 public class InterpreterSettingManagerTest extends AbstractInterpreterTest {
+
+  @Before
+  public void setUp() throws Exception {
+    super.setUp();
+
+    Note note1 = new Note(new NoteInfo("note1", "/note_1"));
+    Note note2 = new Note(new NoteInfo("note2", "/note_2"));
+    Note note3 = new Note(new NoteInfo("note3", "/note_3"));
+    when(mockNotebook.getNote("note1")).thenReturn(note1);
+    when(mockNotebook.getNote("note2")).thenReturn(note2);
+    when(mockNotebook.getNote("note3")).thenReturn(note3);
+  }
 
   @Test
   public void testInitInterpreterSettingManager() throws IOException, RepositoryException {
@@ -50,7 +64,6 @@ public class InterpreterSettingManagerTest extends AbstractInterpreterTest {
     InterpreterSetting interpreterSetting = interpreterSettingManager.getByName("test");
     assertEquals("test", interpreterSetting.getName());
     assertEquals("test", interpreterSetting.getGroup());
-    assertTrue(interpreterSetting.getLifecycleManager() instanceof NullLifecycleManager);
     assertEquals(8, interpreterSetting.getInterpreterInfos().size());
     // 3 other builtin properties:
     //   * zeppelin.interpreter.output.limit
@@ -176,7 +189,7 @@ public class InterpreterSettingManagerTest extends AbstractInterpreterTest {
     InterpreterGroup interpreterGroup = interpreterSetting.getInterpreterGroup("user1", "note1");
     assertEquals(3, interpreterGroup.getSessionNum());
     // only close user1's session
-    interpreterSettingManager.restart(interpreterSetting.getId(), "note1", "user1");
+    interpreterSettingManager.restart(interpreterSetting.getId(), "user1", "note1");
     assertEquals(2, interpreterGroup.getSessionNum());
 
     // remove interpreter setting
@@ -184,23 +197,20 @@ public class InterpreterSettingManagerTest extends AbstractInterpreterTest {
     assertEquals(6, interpreterSettingManager.get().size());
 
     // load it again
-    InterpreterSettingManager interpreterSettingManager3 = new InterpreterSettingManager(new ZeppelinConfiguration(),
+    InterpreterSettingManager interpreterSettingManager3 = new InterpreterSettingManager(ZeppelinConfiguration.create(),
         mock(AngularObjectRegistryListener.class), mock(RemoteInterpreterProcessListener.class), mock(ApplicationEventListener.class));
     assertEquals(6, interpreterSettingManager3.get().size());
 
   }
 
-  //@Test
-  public void testGetEditor() throws IOException, InterpreterNotFoundException {
-    Interpreter echoInterpreter = interpreterFactory.getInterpreter("user1", "note1", "test.echo", "test");
+  @Test
+  public void testGetEditor() {
     // get editor setting from interpreter-setting.json
-    Map<String, Object> editor = interpreterSettingManager.getEditorSetting("test.echo", "note1");
+    Map<String, Object> editor = interpreterSettingManager.getEditorSetting("%test.echo", "note1");
     assertEquals("java", editor.get("language"));
 
-    // when editor setting doesn't exit, return the default editor
-    Interpreter mock1Interpreter = interpreterFactory.getInterpreter("user1", "note1", "mock1", "test");
-    editor = interpreterSettingManager.getEditorSetting("mock1", "note1");
-    assertEquals("text", editor.get("language"));
+    editor = interpreterSettingManager.getEditorSetting("%mock1", "note1");
+    assertEquals("python", editor.get("language"));
   }
 
   @Test
@@ -227,7 +237,7 @@ public class InterpreterSettingManagerTest extends AbstractInterpreterTest {
     interpreterSetting.getOrCreateSession("user2", "note2");
     assertEquals(2, interpreterSetting.getAllInterpreterGroups().size());
 
-    interpreterSettingManager.restart(interpreterSetting.getId(), "note1", "user1");
+    interpreterSettingManager.restart(interpreterSetting.getId(), "user1", "note1");
     assertEquals(1, interpreterSetting.getAllInterpreterGroups().size());
   }
 
@@ -241,7 +251,7 @@ public class InterpreterSettingManagerTest extends AbstractInterpreterTest {
     interpreterSetting.getOrCreateSession("user2", "note2");
     assertEquals(2, interpreterSetting.getAllInterpreterGroups().size());
 
-    interpreterSettingManager.restart(interpreterSetting.getId(), "note1", "user1");
+    interpreterSettingManager.restart(interpreterSetting.getId(), "user1", "note1");
     assertEquals(1, interpreterSetting.getAllInterpreterGroups().size());
   }
 
@@ -256,7 +266,7 @@ public class InterpreterSettingManagerTest extends AbstractInterpreterTest {
     assertEquals(1, interpreterSetting.getAllInterpreterGroups().size());
     assertEquals(2, interpreterSetting.getAllInterpreterGroups().get(0).getSessionNum());
 
-    interpreterSettingManager.restart(interpreterSetting.getId(), "note1", "user1");
+    interpreterSettingManager.restart(interpreterSetting.getId(), "user1", "note1");
     assertEquals(1, interpreterSetting.getAllInterpreterGroups().size());
     assertEquals(1, interpreterSetting.getAllInterpreterGroups().get(0).getSessionNum());
   }
@@ -272,8 +282,58 @@ public class InterpreterSettingManagerTest extends AbstractInterpreterTest {
     assertEquals(1, interpreterSetting.getAllInterpreterGroups().size());
     assertEquals(2, interpreterSetting.getAllInterpreterGroups().get(0).getSessionNum());
 
-    interpreterSettingManager.restart(interpreterSetting.getId(), "note1", "user1");
+    interpreterSettingManager.restart(interpreterSetting.getId(), "user1", "note1");
     assertEquals(1, interpreterSetting.getAllInterpreterGroups().size());
     assertEquals(1, interpreterSetting.getAllInterpreterGroups().get(0).getSessionNum());
+  }
+
+  @Test
+  public void testInterpreterInclude() throws Exception {
+    try {
+      System.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_INCLUDES.getVarName(), "mock1");
+      setUp();
+
+      assertEquals(1, interpreterSettingManager.get().size());
+      assertEquals("mock1", interpreterSettingManager.get().get(0).getGroup());
+    } finally {
+      System.clearProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_INCLUDES.getVarName());
+    }
+  }
+
+  @Test
+  public void testInterpreterExclude() throws Exception {
+    try {
+      System.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_EXCLUDES.getVarName(),
+              "test,config_test,mock_resource_pool");
+      setUp();
+
+      assertEquals(2, interpreterSettingManager.get().size());
+      assertNotNull(interpreterSettingManager.getByName("mock1"));
+      assertNotNull(interpreterSettingManager.getByName("mock2"));
+    } finally {
+      System.clearProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_EXCLUDES.getVarName());
+    }
+  }
+
+  @Test
+  public void testInterpreterIncludeExcludeTogether() throws Exception {
+    try {
+      System.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_INCLUDES.getVarName(),
+              "test,");
+      System.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_EXCLUDES.getVarName(),
+              "config_test,mock_resource_pool");
+
+      try {
+        setUp();
+        fail("Should not able to create InterpreterSettingManager");
+      } catch (Exception e) {
+        e.printStackTrace();
+        assertEquals("zeppelin.interpreter.include and zeppelin.interpreter.exclude can not be specified together, only one can be set.",
+                e.getMessage());
+      }
+    } finally {
+      System.clearProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_INCLUDES.getVarName());
+      System.clearProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_EXCLUDES.getVarName());
+    }
   }
 }

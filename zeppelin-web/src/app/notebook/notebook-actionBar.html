@@ -73,7 +73,7 @@ limitations under the License.
               class="btn btn-default btn-xs"
               ng-hide="viewOnly"
               ng-click="exportNote()"
-              tooltip-placement="bottom" uib-tooltip="Export this note (json)"
+              tooltip-placement="bottom" uib-tooltip="Export this note (zpln)"
               ng-disabled="revisionView">
         <i class="fa fa-download"></i>
       </button>
@@ -84,6 +84,15 @@ limitations under the License.
               tooltip-placement="bottom" uib-tooltip="Export this note (ipynb)"
               ng-disabled="revisionView">
         <i class="fa fa-download"></i>
+      </button>
+
+      <button type="button"
+              class="btn btn-default btn-xs"
+              ng-hide="viewOnly"
+              ng-click="reloadNote()"
+              tooltip-placement="bottom" uib-tooltip="Reload from note file"
+              ng-disabled="revisionView">
+        <i class="fa fa-refresh"></i>
       </button>
 
       <button type="button"
@@ -169,7 +178,7 @@ limitations under the License.
           <span class="caret"></span>
         </button>
         <ul class="dropdown-menu pull-right" aria-labelledby="revisionsDropdown">
-          <li ng-repeat="revision in noteRevisions | orderBy:'time':true" class="revision">
+          <li ng-repeat="revision in revisionSort(noteRevisions)" class="revision">
             <a style="cursor:pointer" ng-click="visitRevision(revision)">
               <span style="display: block;">
                 <strong>{{revision.message}}</strong>
@@ -299,12 +308,6 @@ limitations under the License.
                 <p ng-show="note.info.cron" class="text-danger cron-info">
                   {{note.info.cron}}
                 </p>
-              </div>
-              <div>
-                <span>- After execution stop the interpreter </span>
-                <input type="checkbox"
-                       ng-model="note.config.releaseresource"
-                       ng-click="setReleaseResource(note.config.releaseresource)"/>
               </div>
             </div>
           </li>

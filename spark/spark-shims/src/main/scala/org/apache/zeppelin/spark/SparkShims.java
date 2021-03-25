@@ -99,7 +99,7 @@ public abstract class SparkShims {
                                           String sparkWebUrl,
                                           InterpreterContext context);
 
-  public abstract String showDataFrame(Object obj, int maxResult);
+  public abstract String showDataFrame(Object obj, int maxResult, InterpreterContext context);
 
   public abstract Object getAsDataFrame(String value);
 
@@ -108,11 +108,17 @@ public abstract class SparkShims {
                                   int jobId,
                                   Properties jobProperties,
                                   InterpreterContext context) {
-    String jobUrl = sparkWebUrl + "/jobs/job?id=" + jobId;
-    String version = VersionInfo.getVersion();
-    if (master.toLowerCase().contains("yarn") && !supportYarn6615(version)) {
-      jobUrl = sparkWebUrl + "/jobs";
+    String jobUrl = null;
+    if (sparkWebUrl.contains("{jobId}")) {
+      jobUrl = sparkWebUrl.replace("{jobId}", jobId + "");
+    } else {
+      jobUrl = sparkWebUrl + "/jobs/job?id=" + jobId;
+      String version = VersionInfo.getVersion();
+      if (master.toLowerCase().contains("yarn") && !supportYarn6615(version)) {
+        jobUrl = sparkWebUrl + "/jobs";
+      }
     }
+
     String jobGroupId = jobProperties.getProperty("spark.jobGroup.id");
 
     Map<String, String> infos = new java.util.HashMap<String, String>();

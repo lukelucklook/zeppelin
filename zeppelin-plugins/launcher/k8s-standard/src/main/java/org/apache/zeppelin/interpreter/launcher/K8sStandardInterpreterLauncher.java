@@ -18,22 +18,24 @@
 package org.apache.zeppelin.interpreter.launcher;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.HashMap;
+import java.util.Map;
 
-import com.google.common.annotations.VisibleForTesting;
 import org.apache.zeppelin.conf.ZeppelinConfiguration;
 import org.apache.zeppelin.interpreter.recovery.RecoveryStorage;
 import org.apache.zeppelin.interpreter.remote.RemoteInterpreterUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
+import io.fabric8.kubernetes.client.Config;
+import io.fabric8.kubernetes.client.DefaultKubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClient;
 
 /**
  * Interpreter Launcher which use shell script to launch the interpreter process.
@@ -41,22 +43,12 @@ import java.util.Map;
 public class K8sStandardInterpreterLauncher extends InterpreterLauncher {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(K8sStandardInterpreterLauncher.class);
-  private final Kubectl kubectl;
-  private InterpreterLaunchContext context;
-
+  private final KubernetesClient client;
 
   public K8sStandardInterpreterLauncher(ZeppelinConfiguration zConf, RecoveryStorage recoveryStorage) throws IOException {
     super(zConf, recoveryStorage);
-    kubectl = new Kubectl(zConf.getK8sKubectlCmd());
-    kubectl.setNamespace(getNamespace());
+    client = new DefaultKubernetesClient();
   }
-
-  @VisibleForTesting
-  K8sStandardInterpreterLauncher(ZeppelinConfiguration zConf, RecoveryStorage recoveryStorage, Kubectl kubectl) {
-    super(zConf, recoveryStorage);
-    this.kubectl = kubectl;
-  }
-
 
   /**
    * Check if i'm running inside of kubernetes or not.
@@ -70,11 +62,7 @@ public class K8sStandardInterpreterLauncher extends InterpreterLauncher {
    * @return
    */
   boolean isRunningOnKubernetes() {
-    if (new File("/var/run/secrets/kubernetes.io").exists()) {
-      return true;
-    } else {
-      return false;
-    }
+    return new File(Config.KUBERNETES_NAMESPACE_PATH).exists();
   }
 
   /**
@@ -83,9 +71,9 @@ public class K8sStandardInterpreterLauncher extends InterpreterLauncher {
    */
   String getNamespace() throws IOException {
     if (isRunningOnKubernetes()) {
-      return readFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace", Charset.defaultCharset()).trim();
+      return readFile(Config.KUBERNETES_NAMESPACE_PATH, Charset.defaultCharset()).trim();
     } else {
-      return "default";
+      return zConf.getK8sNamepsace();
     }
   }
 
@@ -102,17 +90,17 @@ public class K8sStandardInterpreterLauncher extends InterpreterLauncher {
   }
 
   /**
-   * get Zeppelin server host dns.
-   * return <hostname>.<namespace>.svc
+   * get Zeppelin service.
+   * return <service-name>.<namespace>.svc
    * @throws IOException
    */
-  private String getZeppelinServiceHost() throws IOException {
+  private String getZeppelinService(InterpreterLaunchContext context) throws IOException {
     if (isRunningOnKubernetes()) {
       return String.format("%s.%s.svc",
-              getHostname(), // service name and pod name should be the same
+              zConf.getK8sServiceName(),
               getNamespace());
     } else {
-      return context.getZeppelinServerHost();
+      return context.getIntpEventServerHost();
     }
   }
 
@@ -120,25 +108,36 @@ public class K8sStandardInterpreterLauncher extends InterpreterLauncher {
    * get Zeppelin server rpc port
    * Read env variable "<HOSTNAME>_SERVICE_PORT_RPC"
    */
-  private String getZeppelinServiceRpcPort() {
+  private int getZeppelinServiceRpcPort(InterpreterLaunchContext context) {
     String envServicePort = System.getenv(
             String.format("%s_SERVICE_PORT_RPC", getHostname().replaceAll("[-.]", "_").toUpperCase()));
     if (envServicePort != null) {
-      return envServicePort;
+      return Integer.parseInt(envServicePort);
     } else {
-      return Integer.toString(context.getZeppelinServerRPCPort());
+      return context.getIntpEventServerPort();
     }
   }
 
+  /**
+   * Interpreter Process will run in K8s. There is no point in changing the user after starting the container.
+   * Switching to an other user (non-privileged) should be done during the image creation process.
+   *
+   * Only if a spark interpreter process is running, userImpersonatation should be possible for --proxy-user
+   */
+  private boolean isUserImpersonateForSparkInterpreter(InterpreterLaunchContext context) {
+      return zConf.getZeppelinImpersonateSparkProxyUser() &&
+          context.getOption().isUserImpersonate() &&
+          "spark".equalsIgnoreCase(context.getInterpreterSettingGroup());
+  }
+
   @Override
-  public InterpreterClient launch(InterpreterLaunchContext context) throws IOException {
-    LOGGER.info("Launching Interpreter: " + context.getInterpreterSettingGroup());
-    this.context = context;
+  public InterpreterClient launchDirectly(InterpreterLaunchContext context) throws IOException {
+    LOGGER.info("Launching Interpreter: {}", context.getInterpreterSettingGroup());
     this.properties = context.getProperties();
-    int connectTimeout = getConnectTimeout();
 
     return new K8sRemoteInterpreterProcess(
-            kubectl,
+            client,
+            getNamespace(),
             new File(zConf.getK8sTemplatesDir(), "interpreter"),
             zConf.getK8sContainerImage(),
             context.getInterpreterGroupId(),
@@ -146,11 +145,14 @@ public class K8sStandardInterpreterLauncher extends InterpreterLauncher {
             context.getInterpreterSettingName(),
             properties,
             buildEnvFromProperties(context),
-            getZeppelinServiceHost(),
-            getZeppelinServiceRpcPort(),
+            getZeppelinService(context),
+            getZeppelinServiceRpcPort(context),
             zConf.getK8sPortForward(),
             zConf.getK8sSparkContainerImage(),
-            connectTimeout);
+            getConnectTimeout(),
+            getConnectPoolSize(),
+            isUserImpersonateForSparkInterpreter(context),
+            zConf.getK8sTimeoutDuringPending());
   }
 
   protected Map<String, String> buildEnvFromProperties(InterpreterLaunchContext context) {
@@ -170,7 +172,7 @@ public class K8sStandardInterpreterLauncher extends InterpreterLauncher {
     return env;
   }
 
-  String readFile(String path, Charset encoding) throws IOException {
+  private String readFile(String path, Charset encoding) throws IOException {
     byte[] encoded = Files.readAllBytes(Paths.get(path));
     return new String(encoded, encoding);
   }

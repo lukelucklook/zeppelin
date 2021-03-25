@@ -24,8 +24,8 @@ import org.apache.commons.exec.ExecuteResultHandler;
 import org.apache.commons.exec.ExecuteWatchdog;
 import org.apache.commons.exec.LogOutputStream;
 import org.apache.commons.exec.PumpStreamHandler;
-import org.apache.commons.lang.StringUtils;
-import org.apache.commons.lang.exception.ExceptionUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.zeppelin.interpreter.InterpreterContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,7 +53,7 @@ public abstract class ProcessLauncher implements ExecuteResultHandler {
   private ExecuteWatchdog watchdog;
   private ProcessLogOutputStream processOutput;
   protected String errorMessage = null;
-  protected State state = State.NEW;
+  protected volatile State state = State.NEW;
   private boolean launchTimeout = false;
 
   public ProcessLauncher(CommandLine commandLine,
@@ -96,7 +96,7 @@ public abstract class ProcessLauncher implements ExecuteResultHandler {
       LOGGER.info("Process is launched: {}", commandLine);
     } catch (IOException e) {
       this.processOutput.stopCatchLaunchOutput();
-      LOGGER.error("Fail to launch process: " + commandLine, e);
+      LOGGER.error("Fail to launch process: {}", commandLine, e);
       transition(State.TERMINATED);
       errorMessage = e.getMessage();
     }
@@ -106,7 +106,7 @@ public abstract class ProcessLauncher implements ExecuteResultHandler {
 
   public void transition(State state) {
     this.state = state;
-    LOGGER.info("Process state is transitioned to " + state);
+    LOGGER.info("Process state is transitioned to {}", state);
   }
 
   public void onTimeout() {
@@ -121,7 +121,7 @@ public abstract class ProcessLauncher implements ExecuteResultHandler {
 
   @Override
   public void onProcessComplete(int exitValue) {
-    LOGGER.warn("Process is exited with exit value " + exitValue);
+    LOGGER.warn("Process is exited with exit value {}", exitValue);
     if (exitValue == 0) {
       transition(State.COMPLETED);
     } else {
@@ -131,7 +131,8 @@ public abstract class ProcessLauncher implements ExecuteResultHandler {
 
   @Override
   public void onProcessFailed(ExecuteException e) {
-    LOGGER.warn("Process is failed due to " + e);
+    LOGGER.warn("Process with cmd {} is failed due to", commandLine, e);
+
     errorMessage = ExceptionUtils.getStackTrace(e);
     transition(State.TERMINATED);
   }
@@ -144,6 +145,10 @@ public abstract class ProcessLauncher implements ExecuteResultHandler {
     }
   }
 
+  public String getProcessLaunchOutput() {
+    return this.processOutput.getProcessExecutionOutput();
+  }
+
   public boolean isLaunchTimeout() {
     return launchTimeout;
   }
@@ -153,7 +158,7 @@ public abstract class ProcessLauncher implements ExecuteResultHandler {
   }
 
   public void stop() {
-    if (watchdog != null) {
+    if (watchdog != null && isRunning()) {
       watchdog.destroyProcess();
       watchdog = null;
     }
@@ -183,7 +188,7 @@ public abstract class ProcessLauncher implements ExecuteResultHandler {
       if (s.startsWith("Interpreter launch command")) {
         LOGGER.info(s);
       } else {
-        LOGGER.debug("Process Output: " + s);
+        LOGGER.debug("Process Output: {}", s);
       }
       if (catchLaunchOutput) {
         launchOutput.append(s + "\n");
@@ -192,7 +197,7 @@ public abstract class ProcessLauncher implements ExecuteResultHandler {
         try {
           redirectedContext.out.write(s + "\n");
         } catch (IOException e) {
-          e.printStackTrace();
+          LOGGER.error("unable to write to redirectedContext", e);
         }
       }
     }

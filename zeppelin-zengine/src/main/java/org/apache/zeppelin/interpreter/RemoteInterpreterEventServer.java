@@ -22,6 +22,7 @@ import com.google.gson.reflect.TypeToken;
 import org.apache.thrift.TException;
 import org.apache.thrift.server.TThreadPoolServer;
 import org.apache.thrift.transport.TServerSocket;
+import org.apache.thrift.transport.TTransportException;
 import org.apache.zeppelin.conf.ZeppelinConfiguration;
 import org.apache.zeppelin.display.AngularObject;
 import org.apache.zeppelin.helium.ApplicationEventListener;
@@ -34,6 +35,7 @@ import org.apache.zeppelin.interpreter.remote.RemoteInterpreterUtils;
 import org.apache.zeppelin.interpreter.thrift.AppOutputAppendEvent;
 import org.apache.zeppelin.interpreter.thrift.AppOutputUpdateEvent;
 import org.apache.zeppelin.interpreter.thrift.AppStatusUpdateEvent;
+import org.apache.zeppelin.interpreter.thrift.InterpreterRPCException;
 import org.apache.zeppelin.interpreter.thrift.ParagraphInfo;
 import org.apache.zeppelin.interpreter.thrift.RegisterInfo;
 import org.apache.zeppelin.interpreter.thrift.OutputAppendEvent;
@@ -41,19 +43,22 @@ import org.apache.zeppelin.interpreter.thrift.OutputUpdateAllEvent;
 import org.apache.zeppelin.interpreter.thrift.OutputUpdateEvent;
 import org.apache.zeppelin.interpreter.thrift.RemoteInterpreterEventService;
 import org.apache.zeppelin.interpreter.thrift.RemoteInterpreterResultMessage;
-import org.apache.zeppelin.interpreter.thrift.RemoteInterpreterService;
 import org.apache.zeppelin.interpreter.thrift.RunParagraphsEvent;
 import org.apache.zeppelin.interpreter.thrift.ServiceException;
+import org.apache.zeppelin.interpreter.thrift.WebUrlInfo;
+import org.apache.zeppelin.notebook.Note;
 import org.apache.zeppelin.resource.RemoteResource;
 import org.apache.zeppelin.resource.Resource;
 import org.apache.zeppelin.resource.ResourceId;
 import org.apache.zeppelin.resource.ResourcePool;
 import org.apache.zeppelin.resource.ResourceSet;
+import org.apache.zeppelin.user.AuthenticationInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -65,10 +70,12 @@ import java.util.concurrent.TimeUnit;
 public class RemoteInterpreterEventServer implements RemoteInterpreterEventService.Iface {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(RemoteInterpreterEventServer.class);
+  private static final Gson GSON = new Gson();
 
   private String portRange;
   private int port;
   private String host;
+  private ZeppelinConfiguration zConf;
   private TThreadPoolServer thriftServer;
   private InterpreterSettingManager interpreterSettingManager;
 
@@ -78,10 +85,11 @@ public class RemoteInterpreterEventServer implements RemoteInterpreterEventServi
   private AppendOutputRunner runner;
   private final RemoteInterpreterProcessListener listener;
   private final ApplicationEventListener appListener;
-  private final Gson gson = new Gson();
+
 
   public RemoteInterpreterEventServer(ZeppelinConfiguration zConf,
                                       InterpreterSettingManager interpreterSettingManager) {
+    this.zConf = zConf;
     this.portRange = zConf.getZeppelinServerRPCPortRange();
     this.interpreterSettingManager = interpreterSettingManager;
     this.listener = interpreterSettingManager.getRemoteInterpreterProcessListener();
@@ -92,21 +100,19 @@ public class RemoteInterpreterEventServer implements RemoteInterpreterEventServi
     Thread startingThread = new Thread() {
       @Override
       public void run() {
-        TServerSocket tSocket = null;
-        try {
-          tSocket = RemoteInterpreterUtils.createTServerSocket(portRange);
+        try (TServerSocket tSocket = new TServerSocket(RemoteInterpreterUtils.findAvailablePort(portRange))){
           port = tSocket.getServerSocket().getLocalPort();
           host = RemoteInterpreterUtils.findAvailableHostAddress();
-        } catch (IOException e1) {
-          throw new RuntimeException(e1);
+          LOGGER.info("InterpreterEventServer is starting at {}:{}", host, port);
+          RemoteInterpreterEventService.Processor<RemoteInterpreterEventServer> processor =
+              new RemoteInterpreterEventService.Processor<>(RemoteInterpreterEventServer.this);
+          thriftServer = new TThreadPoolServer(
+              new TThreadPoolServer.Args(tSocket).processor(processor));
+          thriftServer.serve();
+        } catch (IOException | TTransportException e ) {
+          throw new RuntimeException("Fail to create TServerSocket", e);
         }
-
-        LOGGER.info("InterpreterEventServer is starting at {}:{}", host, port);
-        RemoteInterpreterEventService.Processor processor =
-            new RemoteInterpreterEventService.Processor(RemoteInterpreterEventServer.this);
-        thriftServer = new TThreadPoolServer(
-            new TThreadPoolServer.Args(tSocket).processor(processor));
-        thriftServer.serve();
+        LOGGER.info("ThriftServer-Thread finished");
       }
     };
     startingThread.start();
@@ -153,25 +159,57 @@ public class RemoteInterpreterEventServer implements RemoteInterpreterEventServi
   }
 
   @Override
-  public void registerInterpreterProcess(RegisterInfo registerInfo) throws TException {
+  public void registerInterpreterProcess(RegisterInfo registerInfo) throws InterpreterRPCException, TException {
     InterpreterGroup interpreterGroup =
         interpreterSettingManager.getInterpreterGroupById(registerInfo.getInterpreterGroupId());
     if (interpreterGroup == null) {
-      LOGGER.warn("No such interpreterGroup: " + registerInfo.getInterpreterGroupId());
+      LOGGER.warn("Unable to register interpreter process, because no such interpreterGroup: {}",
+              registerInfo.getInterpreterGroupId());
       return;
     }
     RemoteInterpreterProcess interpreterProcess =
         ((ManagedInterpreterGroup) interpreterGroup).getInterpreterProcess();
     if (interpreterProcess == null) {
-      LOGGER.warn("Interpreter process does not existed yet for InterpreterGroup: " +
-          registerInfo.getInterpreterGroupId());
+      LOGGER.warn("Unable to register interpreter process, because no interpreter process associated with " +
+              "interpreterGroup: {}", registerInfo.getInterpreterGroupId());
+      return;
     }
-
+    LOGGER.info("Register interpreter process: {}:{}, interpreterGroup: {}",
+            registerInfo.getHost(), registerInfo.getPort(), registerInfo.getInterpreterGroupId());
     interpreterProcess.processStarted(registerInfo.port, registerInfo.host);
   }
 
   @Override
-  public void appendOutput(OutputAppendEvent event) throws TException {
+  public void unRegisterInterpreterProcess(String intpGroupId) throws InterpreterRPCException, TException {
+    LOGGER.info("Unregister interpreter process: {}", intpGroupId);
+    InterpreterGroup interpreterGroup =
+            interpreterSettingManager.getInterpreterGroupById(intpGroupId);
+    if (interpreterGroup == null) {
+      LOGGER.warn("Unable to unregister interpreter process because no such interpreterGroup: {}",
+              intpGroupId);
+      return;
+    }
+    // Close RemoteInterpreter when RemoteInterpreterServer already timeout.
+    // Otherwise the ProgressBar will be missing when rerun after the RemoteInterpreterServer timeout
+    // and old RemoteInterpreterGroups will always alive after GC.
+    interpreterGroup.close();
+    interpreterSettingManager.removeInterpreterGroup(intpGroupId);
+  }
+
+  @Override
+  public void sendWebUrl(WebUrlInfo weburlInfo) throws InterpreterRPCException, TException {
+    InterpreterGroup interpreterGroup =
+            interpreterSettingManager.getInterpreterGroupById(weburlInfo.getInterpreterGroupId());
+    if (interpreterGroup == null) {
+      LOGGER.warn("Unable to sendWebUrl, because no such interpreterGroup: {}",
+              weburlInfo.getInterpreterGroupId());
+      return;
+    }
+    interpreterGroup.setWebUrl(weburlInfo.getWeburl());
+  }
+
+  @Override
+  public void appendOutput(OutputAppendEvent event) throws InterpreterRPCException, TException {
     if (event.getAppId() == null) {
       runner.appendBuffer(
           event.getNoteId(), event.getParagraphId(), event.getIndex(), event.getData());
@@ -182,7 +220,7 @@ public class RemoteInterpreterEventServer implements RemoteInterpreterEventServi
   }
 
   @Override
-  public void updateOutput(OutputUpdateEvent event) throws TException {
+  public void updateOutput(OutputUpdateEvent event) throws InterpreterRPCException, TException {
     if (event.getAppId() == null) {
       listener.onOutputUpdated(event.getNoteId(), event.getParagraphId(), event.getIndex(),
           InterpreterResult.Type.valueOf(event.getType()), event.getData());
@@ -193,7 +231,7 @@ public class RemoteInterpreterEventServer implements RemoteInterpreterEventServi
   }
 
   @Override
-  public void updateAllOutput(OutputUpdateAllEvent event) throws TException {
+  public void updateAllOutput(OutputUpdateAllEvent event) throws InterpreterRPCException, TException {
     listener.onOutputClear(event.getNoteId(), event.getParagraphId());
     for (int i = 0; i < event.getMsg().size(); i++) {
       RemoteInterpreterResultMessage msg = event.getMsg().get(i);
@@ -203,63 +241,75 @@ public class RemoteInterpreterEventServer implements RemoteInterpreterEventServi
   }
 
   @Override
-  public void appendAppOutput(AppOutputAppendEvent event) throws TException {
+  public void appendAppOutput(AppOutputAppendEvent event) throws InterpreterRPCException, TException {
     appListener.onOutputAppend(event.noteId, event.paragraphId, event.index, event.appId,
         event.data);
   }
 
   @Override
-  public void updateAppOutput(AppOutputUpdateEvent event) throws TException {
+  public void updateAppOutput(AppOutputUpdateEvent event) throws InterpreterRPCException, TException {
     appListener.onOutputUpdated(event.noteId, event.paragraphId, event.index, event.appId,
         InterpreterResult.Type.valueOf(event.type), event.data);
   }
 
   @Override
-  public void updateAppStatus(AppStatusUpdateEvent event) throws TException {
+  public void updateAppStatus(AppStatusUpdateEvent event) throws InterpreterRPCException, TException {
     appListener.onStatusChange(event.noteId, event.paragraphId, event.appId, event.status);
   }
 
   @Override
-  public void checkpointOutput(String noteId, String paragraphId) throws TException {
+  public void checkpointOutput(String noteId, String paragraphId) throws InterpreterRPCException, TException {
     listener.checkpointOutput(noteId, paragraphId);
   }
 
   @Override
-  public void runParagraphs(RunParagraphsEvent event) throws TException {
+  public void runParagraphs(RunParagraphsEvent event) throws InterpreterRPCException, TException {
     try {
       listener.runParagraphs(event.getNoteId(), event.getParagraphIndices(),
           event.getParagraphIds(), event.getCurParagraphId());
       if (InterpreterContext.get() != null) {
-        LOGGER.info("complete runParagraphs." + InterpreterContext.get().getParagraphId() + " "
-          + event);
+        LOGGER.info("complete runParagraphs.{} {}", InterpreterContext.get().getParagraphId(), event);
       } else {
-        LOGGER.info("complete runParagraphs." + event);
+        LOGGER.info("complete runParagraphs.{}", event);
       }
     } catch (IOException e) {
-      throw new TException(e);
+      throw new InterpreterRPCException(e.toString());
     }
   }
 
   @Override
-  public void addAngularObject(String intpGroupId, String json) throws TException {
-    LOGGER.debug("Add AngularObject, interpreterGroupId: " + intpGroupId + ", json: " + json);
-    AngularObject angularObject = AngularObject.fromJson(json);
+  public void addAngularObject(String intpGroupId, String json) throws InterpreterRPCException, TException {
+    LOGGER.debug("Add AngularObject, interpreterGroupId: {}, json: {}", intpGroupId, json);
+    AngularObject<?> angularObject = AngularObject.fromJson(json);
     InterpreterGroup interpreterGroup =
         interpreterSettingManager.getInterpreterGroupById(intpGroupId);
     if (interpreterGroup == null) {
-      throw new TException("Invalid InterpreterGroupId: " + intpGroupId);
+      LOGGER.warn("Invalid InterpreterGroupId: {}", intpGroupId);
+      return;
     }
     interpreterGroup.getAngularObjectRegistry().add(angularObject.getName(),
         angularObject.get(), angularObject.getNoteId(), angularObject.getParagraphId());
+
+    if (angularObject.getNoteId() != null) {
+      try {
+        Note note = interpreterSettingManager.getNotebook().getNote(angularObject.getNoteId());
+        if (note != null) {
+          note.addOrUpdateAngularObject(intpGroupId, angularObject);
+          interpreterSettingManager.getNotebook().saveNote(note, AuthenticationInfo.ANONYMOUS);
+        }
+      } catch (IOException e) {
+        LOGGER.error("Fail to get note: {}", angularObject.getNoteId());
+      }
+    }
   }
 
   @Override
-  public void updateAngularObject(String intpGroupId, String json) throws TException {
-    AngularObject angularObject = AngularObject.fromJson(json);
+  public void updateAngularObject(String intpGroupId, String json) throws InterpreterRPCException, TException {
+    AngularObject<?> angularObject = AngularObject.fromJson(json);
     InterpreterGroup interpreterGroup =
         interpreterSettingManager.getInterpreterGroupById(intpGroupId);
     if (interpreterGroup == null) {
-      throw new TException("Invalid InterpreterGroupId: " + intpGroupId);
+      throw new InterpreterRPCException("Invalid InterpreterGroupId: " + intpGroupId);
     }
     AngularObject localAngularObject = interpreterGroup.getAngularObjectRegistry().get(
         angularObject.getName(), angularObject.getNoteId(), angularObject.getParagraphId());
@@ -270,43 +320,63 @@ public class RemoteInterpreterEventServer implements RemoteInterpreterEventServi
     } else {
       localAngularObject.set(angularObject.get());
     }
+
+    if (angularObject.getNoteId() != null) {
+      try {
+        Note note = interpreterSettingManager.getNotebook().getNote(angularObject.getNoteId());
+        if (note != null) {
+          note.addOrUpdateAngularObject(intpGroupId, angularObject);
+          interpreterSettingManager.getNotebook().saveNote(note, AuthenticationInfo.ANONYMOUS);
+        }
+      } catch (IOException e) {
+        LOGGER.error("Fail to get note: {}", angularObject.getNoteId());
+      }
+    }
   }
 
   @Override
   public void removeAngularObject(String intpGroupId,
                                   String noteId,
                                   String paragraphId,
-                                  String name) throws TException {
+                                  String name) throws InterpreterRPCException, TException {
     InterpreterGroup interpreterGroup =
         interpreterSettingManager.getInterpreterGroupById(intpGroupId);
     if (interpreterGroup == null) {
-      throw new TException("Invalid InterpreterGroupId: " + intpGroupId);
+      throw new InterpreterRPCException("Invalid InterpreterGroupId: " + intpGroupId);
     }
     interpreterGroup.getAngularObjectRegistry().remove(name, noteId, paragraphId);
+
+    if (noteId != null) {
+      try {
+        Note note = interpreterSettingManager.getNotebook().getNote(noteId);
+        note.deleteAngularObject(intpGroupId, noteId, paragraphId, name);
+      } catch (IOException e) {
+        LOGGER.warn("Fail to get note: {}", noteId, e);
+      }
+    }
   }
 
   @Override
-  public void sendParagraphInfo(String intpGroupId, String json) throws TException {
+  public void sendParagraphInfo(String intpGroupId, String json) throws InterpreterRPCException, TException {
     InterpreterGroup interpreterGroup =
         interpreterSettingManager.getInterpreterGroupById(intpGroupId);
     if (interpreterGroup == null) {
-      throw new TException("Invalid InterpreterGroupId: " + intpGroupId);
+      throw new InterpreterRPCException("Invalid InterpreterGroupId: " + intpGroupId);
     }
 
-    Map<String, String> paraInfos = gson.fromJson(json,
+    Map<String, String> paraInfos = GSON.fromJson(json,
         new TypeToken<Map<String, String>>() {
         }.getType());
     String noteId = paraInfos.get("noteId");
     String paraId = paraInfos.get("paraId");
-    String settingId = RemoteInterpreterUtils.
-        getInterpreterSettingId(interpreterGroup.getId());
+    String settingId = ((ManagedInterpreterGroup) interpreterGroup).getInterpreterSetting().getId();
     if (noteId != null && paraId != null && settingId != null) {
       listener.onParaInfosReceived(noteId, paraId, settingId, paraInfos);
     }
   }
 
   @Override
-  public List<String> getAllResources(String intpGroupId) throws TException {
+  public List<String> getAllResources(String intpGroupId) throws InterpreterRPCException, TException {
     ResourceSet resourceSet = getAllResourcePoolExcept(intpGroupId);
     List<String> resourceList = new LinkedList<>();
     for (Resource r : resourceSet) {
@@ -316,7 +386,7 @@ public class RemoteInterpreterEventServer implements RemoteInterpreterEventServi
   }
 
   @Override
-  public ByteBuffer getResource(String resourceIdJson) throws TException {
+  public ByteBuffer getResource(String resourceIdJson) throws InterpreterRPCException, TException {
     ResourceId resourceId = ResourceId.fromJson(resourceIdJson);
     Object o = getResource(resourceId);
     ByteBuffer obj;
@@ -326,7 +396,7 @@ public class RemoteInterpreterEventServer implements RemoteInterpreterEventServi
       try {
         obj = Resource.serializeObject(o);
       } catch (IOException e) {
-        throw new TException(e);
+        throw new InterpreterRPCException(e.toString());
       }
     }
     return obj;
@@ -340,7 +410,8 @@ public class RemoteInterpreterEventServer implements RemoteInterpreterEventServi
    * @throws TException
    */
   @Override
-  public ByteBuffer invokeMethod(String intpGroupId, String invokeMethodJson) throws TException {
+  public ByteBuffer invokeMethod(String intpGroupId, String invokeMethodJson)
+          throws InterpreterRPCException, TException {
     InvokeResourceMethodEventMessage invokeMethodMessage =
         InvokeResourceMethodEventMessage.fromJson(invokeMethodJson);
     Object ret = invokeResourceMethod(intpGroupId, invokeMethodMessage);
@@ -359,21 +430,20 @@ public class RemoteInterpreterEventServer implements RemoteInterpreterEventServi
 
   @Override
   public List<ParagraphInfo> getParagraphList(String user, String noteId)
-      throws TException, ServiceException {
-    LOGGER.info("get paragraph list from remote interpreter noteId: " + noteId
-        + ", user = " + user);
+          throws InterpreterRPCException, TException {
+    LOGGER.info("get paragraph list from remote interpreter noteId: {}, user = {}",noteId, user);
 
     if (user != null && noteId != null) {
       List<ParagraphInfo> paragraphInfos = null;
       try {
         paragraphInfos = listener.getParagraphList(user, noteId);
       } catch (IOException e) {
-       throw new TException(e);
+       throw new InterpreterRPCException(e.toString());
       }
       return paragraphInfos;
     } else {
       LOGGER.error("user or noteId is null!");
-      return null;
+      return Collections.emptyList();
     }
   }
 
@@ -412,18 +482,12 @@ public class RemoteInterpreterEventServer implements RemoteInterpreterEventServi
         return null;
       }
     } else if (remoteInterpreterProcess.isRunning()) {
-      ByteBuffer res = remoteInterpreterProcess.callRemoteFunction(
-          new RemoteInterpreterProcess.RemoteFunction<ByteBuffer>() {
-            @Override
-            public ByteBuffer call(RemoteInterpreterService.Client client) throws Exception {
-              return client.resourceInvokeMethod(
+      ByteBuffer res = remoteInterpreterProcess.callRemoteFunction(client ->
+              client.resourceInvokeMethod(
                   resourceId.getNoteId(),
                   resourceId.getParagraphId(),
                   resourceId.getName(),
-                  message.toJson());
-            }
-          }
-      );
+                  message.toJson()));
 
       try {
         return Resource.deserializeObject(res);
@@ -442,21 +506,14 @@ public class RemoteInterpreterEventServer implements RemoteInterpreterEventServi
       return null;
     }
     RemoteInterpreterProcess remoteInterpreterProcess = intpGroup.getRemoteInterpreterProcess();
-    ByteBuffer buffer = remoteInterpreterProcess.callRemoteFunction(
-        new RemoteInterpreterProcess.RemoteFunction<ByteBuffer>() {
-          @Override
-          public ByteBuffer call(RemoteInterpreterService.Client client) throws Exception {
-            return  client.resourceGet(
+    ByteBuffer buffer = remoteInterpreterProcess.callRemoteFunction(client ->
+            client.resourceGet(
                 resourceId.getNoteId(),
                 resourceId.getParagraphId(),
-                resourceId.getName());
-          }
-        }
-    );
+                resourceId.getName()));
 
     try {
-      Object o = Resource.deserializeObject(buffer);
-      return o;
+      return Resource.deserializeObject(buffer);
     } catch (Exception e) {
       LOGGER.error(e.getMessage(), e);
     }
@@ -478,18 +535,26 @@ public class RemoteInterpreterEventServer implements RemoteInterpreterEventServi
         }
       } else if (remoteInterpreterProcess.isRunning()) {
         List<String> resourceList = remoteInterpreterProcess.callRemoteFunction(
-            new RemoteInterpreterProcess.RemoteFunction<List<String>>() {
-              @Override
-              public List<String> call(RemoteInterpreterService.Client client) throws Exception {
-                return client.resourcePoolGetAll();
-              }
-            }
-        );
+                client -> client.resourcePoolGetAll());
         for (String res : resourceList) {
           resourceSet.add(RemoteResource.fromJson(res));
         }
       }
     }
     return resourceSet;
+  }
+
+  @Override
+  public void updateParagraphConfig(String noteId,
+                                    String paragraphId,
+                                    Map<String, String> config)
+          throws InterpreterRPCException, TException {
+    try {
+      Note note = interpreterSettingManager.getNotebook().getNote(noteId);
+      note.getParagraph(paragraphId).updateConfig(config);
+      interpreterSettingManager.getNotebook().saveNote(note, AuthenticationInfo.ANONYMOUS);
+    } catch (Exception e) {
+      LOGGER.error("Fail to updateParagraphConfig", e);
+    }
   }
 }

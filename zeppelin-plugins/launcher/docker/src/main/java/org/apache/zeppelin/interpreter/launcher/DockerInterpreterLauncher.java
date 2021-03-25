@@ -38,8 +38,8 @@ public class DockerInterpreterLauncher extends InterpreterLauncher {
   }
 
   @Override
-  public InterpreterClient launch(InterpreterLaunchContext context) throws IOException {
-    LOGGER.info("Launching Interpreter: " + context.getInterpreterSettingGroup());
+  public InterpreterClient launchDirectly(InterpreterLaunchContext context) throws IOException {
+    LOGGER.info("Launching Interpreter: {}", context.getInterpreterSettingGroup());
     this.context = context;
     this.properties = context.getProperties();
     int connectTimeout = getConnectTimeout();
@@ -55,6 +55,8 @@ public class DockerInterpreterLauncher extends InterpreterLauncher {
     StandardInterpreterLauncher interpreterLauncher = null;
     if (isSpark()) {
       interpreterLauncher = new SparkInterpreterLauncher(zConf, recoveryStorage);
+    } else if (isFlink()) {
+      interpreterLauncher = new FlinkInterpreterLauncher(zConf, recoveryStorage);
     } else {
       interpreterLauncher = new StandardInterpreterLauncher(zConf, recoveryStorage);
     }
@@ -69,12 +71,16 @@ public class DockerInterpreterLauncher extends InterpreterLauncher {
         context.getInterpreterSettingName(),
         properties,
         env,
-        context.getZeppelinServerHost(),
-        Integer.toString(context.getZeppelinServerRPCPort()),
-        connectTimeout);
+        context.getIntpEventServerHost(),
+        context.getIntpEventServerPort(),
+        connectTimeout, 10);
   }
 
   boolean isSpark() {
     return "spark".equalsIgnoreCase(context.getInterpreterSettingName());
+  }
+
+  boolean isFlink() {
+    return "flink".equalsIgnoreCase(context.getInterpreterSettingName());
   }
 }

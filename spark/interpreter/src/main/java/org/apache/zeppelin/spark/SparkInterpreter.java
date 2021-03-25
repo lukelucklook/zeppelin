@@ -17,13 +17,13 @@
 
 package org.apache.zeppelin.spark;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.spark.SparkConf;
 import org.apache.spark.SparkContext;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.sql.SQLContext;
 import org.apache.zeppelin.interpreter.AbstractInterpreter;
-import org.apache.zeppelin.interpreter.BaseZeppelinContext;
+import org.apache.zeppelin.interpreter.ZeppelinContext;
 import org.apache.zeppelin.interpreter.InterpreterContext;
 import org.apache.zeppelin.interpreter.InterpreterException;
 import org.apache.zeppelin.interpreter.InterpreterGroup;
@@ -89,11 +89,19 @@ public class SparkInterpreter extends AbstractInterpreter {
         }
         if (entry.getKey().toString().equals("zeppelin.spark.concurrentSQL")
             && entry.getValue().toString().equals("true")) {
-          conf.set("spark.scheduler.mode", "FAIR");
+          conf.set(SparkStringConstants.SCHEDULER_MODE_PROP_NAME, "FAIR");
         }
       }
       // use local mode for embedded spark mode when spark.master is not found
-      conf.setIfMissing("spark.master", "local");
+      if (!conf.contains(SparkStringConstants.MASTER_PROP_NAME)) {
+        if (conf.contains("master")) {
+          conf.set(SparkStringConstants.MASTER_PROP_NAME, conf.get("master"));
+        } else {
+          String masterEnv = System.getenv(SparkStringConstants.MASTER_ENV_NAME);
+          conf.set(SparkStringConstants.MASTER_PROP_NAME,
+                  masterEnv == null ? SparkStringConstants.DEFAULT_MASTER_VALUE : masterEnv);
+        }
+      }
       this.innerInterpreter = loadSparkScalaInterpreter(conf);
       this.innerInterpreter.open();
 
@@ -197,7 +205,10 @@ public class SparkInterpreter extends AbstractInterpreter {
     return innerInterpreter.getProgress(Utils.buildJobGroupId(context), context);
   }
 
-  public BaseZeppelinContext getZeppelinContext() {
+  public ZeppelinContext getZeppelinContext() {
+    if (this.innerInterpreter == null) {
+      throw new RuntimeException("innerInterpreterContext is null");
+    }
     return this.innerInterpreter.getZeppelinContext();
   }
 
@@ -205,7 +216,14 @@ public class SparkInterpreter extends AbstractInterpreter {
     return this.sc;
   }
 
-  public SQLContext getSQLContext() {
+  /**
+   * Must use Object, because the its api signature in Spark 1.x is different from
+   * that of Spark 2.x.
+   * e.g. SqlContext.sql(sql) return different type.
+   *
+   * @return
+   */
+  public Object getSQLContext() {
     return sqlContext;
   }
 
@@ -235,6 +253,14 @@ public class SparkInterpreter extends AbstractInterpreter {
     }
   }
 
+  public boolean isScala212() throws InterpreterException {
+    return extractScalaVersion().equals("2.12");
+  }
+
+  public boolean isScala210() throws InterpreterException {
+    return extractScalaVersion().equals("2.10");
+  }
+
   private List<String> getDependencyFiles() throws InterpreterException {
     List<String> depFiles = new ArrayList<>();
     // add jar from local repo
@@ -251,6 +277,10 @@ public class SparkInterpreter extends AbstractInterpreter {
       }
     }
     return depFiles;
+  }
+
+  public ClassLoader getScalaShellClassLoader() {
+    return innerInterpreter.getScalaShellClassLoader();
   }
 
   public boolean isUnsupportedSparkVersion() {

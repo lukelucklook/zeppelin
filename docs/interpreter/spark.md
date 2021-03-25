@@ -81,9 +81,14 @@ You can also set other Spark properties which are not listed in the table. For a
     <td>Location of spark distribution</td>
   <tr>
   <tr>
-    <td>master</td>
+    <td>spark.master</td>
     <td>local[*]</td>
     <td>Spark master uri. <br/> e.g. spark://master_host:7077</td>
+  <tr>
+  <tr>
+    <td>spark.submit.deployMode</td>
+    <td></td>
+    <td>The deploy mode of Spark driver program, either "client" or "cluster", Which means to launch driver program locally ("client") or remotely ("cluster") on one of the nodes inside the cluster.</td>
   <tr>
     <td>spark.app.name</td>
     <td>Zeppelin</td>
@@ -108,6 +113,11 @@ You can also set other Spark properties which are not listed in the table. For a
     <td>spark.executor.memory</td>
     <td>1g</td>
     <td>Executor memory per worker instance. <br/> e.g. 512m, 32g</td>
+  </tr>
+  <tr>
+    <td>spark.executor.instances</td>
+    <td>2</td>
+    <td>The number of executors for static allocation</td>
   </tr>
   <tr>
     <td>spark.files</td>
@@ -184,7 +194,26 @@ You can also set other Spark properties which are not listed in the table. For a
   <tr>
   <td>zeppelin.spark.uiWebUrl</td>
     <td></td>
-    <td>Overrides Spark UI default URL. Value should be a full URL (ex: http://{hostName}/{uniquePath}</td>
+    <td>
+      Overrides Spark UI default URL. Value should be a full URL (ex: http://{hostName}/{uniquePath}.
+      In Kubernetes mode, value can be Jinja template string with 3 template variables 'PORT', 'SERVICE_NAME' and 'SERVICE_DOMAIN'.
+      (ex: http://{{PORT}}-{{SERVICE_NAME}}.{{SERVICE_DOMAIN}})
+     </td>
+  </tr>
+  <tr>
+    <td>spark.webui.yarn.useProxy</td>
+    <td>false</td>
+    <td>whether use yarn proxy url as spark weburl, e.g. http://localhost:8088/proxy/application_1583396598068_0004</td>
+  </tr>
+  <tr>
+    <td>spark.repl.target</td>
+    <td>jvm-1.6</td>
+    <td>
+      Manually specifying the Java version of Spark Interpreter Scala REPL,Available options:<br/> 
+      scala-compile v2.10.7 to v2.11.12 supports "jvm-1.5, jvm-1.6, jvm-1.7 and jvm-1.8", and the default value is jvm-1.6.<br/> 
+      scala-compile v2.10.1 to v2.10.6 supports "jvm-1.5, jvm-1.6, jvm-1.7", and the default value is jvm-1.6.<br/> 
+      scala-compile v2.12.x defaults to jvm-1.8, and only supports jvm-1.8.
+    </td>
   </tr>
 </table>
 
@@ -240,20 +269,45 @@ configuration with code together for more flexibility. e.g.
 </center>
 
 ### Set master in Interpreter menu
-After starting Zeppelin, go to **Interpreter** menu and edit **master** property in your Spark interpreter setting. The value may vary depending on your Spark cluster deployment type.
+After starting Zeppelin, go to **Interpreter** menu and edit **spark.master** property in your Spark interpreter setting. The value may vary depending on your Spark cluster deployment type.
 
 For example,
 
  * **local[*]** in local mode
  * **spark://master:7077** in standalone cluster
- * **yarn-client** in Yarn client mode
- * **yarn-cluster** in Yarn cluster mode
+ * **yarn-client** in Yarn client mode  (Not supported in spark 3.x, refer below for how to configure yarn-client in Spark 3.x)
+ * **yarn-cluster** in Yarn cluster mode  (Not supported in spark 3.x, refer below for how to configure yarn-client in Spark 3.x)
  * **mesos://host:5050** in Mesos cluster
 
 That's it. Zeppelin will work with any version of Spark and any deployment type without rebuilding Zeppelin in this way.
 For the further information about Spark & Zeppelin version compatibility, please refer to "Available Interpreters" section in [Zeppelin download page](https://zeppelin.apache.org/download.html).
 
 > Note that without exporting `SPARK_HOME`, it's running in local mode with included version of Spark. The included version may vary depending on the build profile.
+
+> Yarn client mode and local mode will run driver in the same machine with zeppelin server, this would be dangerous for production. Because it may run out of memory when there's many spark interpreters running at the same time. So we suggest you only allow yarn-cluster mode via setting `zeppelin.spark.only_yarn_cluster` in `zeppelin-site.xml`.
+
+#### Configure yarn mode for Spark 3.x
+
+Specifying `yarn-client` & `yarn-cluster` in `spark.master` is not supported in Spark 3.x any more, instead you need to use `spark.master` and `spark.submit.deployMode` together.
+
+<table class="table-configuration">
+  <tr>
+    <th>Mode</th>
+    <th>spark.master</th>
+    <th>spark.submit.deployMode</th>
+  </tr>
+  <tr>
+    <td>Yarn Client</td>
+    <td>yarn</td>
+    <td>client</td>
+  </tr>
+  <tr>
+    <td>Yarn Cluster</td>
+    <td>yarn</td>
+    <td>cluster</td>
+  </tr>  
+</table>
+
 
 ## SparkContext, SQLContext, SparkSession, ZeppelinContext
 
@@ -402,6 +456,20 @@ e.g.
 Zeppelin automatically injects `ZeppelinContext` as variable `z` in your Scala/Python environment. `ZeppelinContext` provides some additional functions and utilities.
 See [Zeppelin-Context](../usage/other_features/zeppelin_context.html) for more details.
 
+## Setting up Zeppelin with Kerberos
+Logical setup with Zeppelin, Kerberos Key Distribution Center (KDC), and Spark on YARN:
+
+<img src="{{BASE_PATH}}/assets/themes/zeppelin/img/docs-img/kdc_zeppelin.png">
+
+There're several ways to make spark work with kerberos enabled hadoop cluster in Zeppelin. 
+
+1. Share one single hadoop cluster.
+In this case you just need to specify `zeppelin.server.kerberos.keytab` and `zeppelin.server.kerberos.principal` in zeppelin-site.xml, Spark interpreter will use these setting by default.
+
+2. Work with multiple hadoop clusters.
+In this case you can specify `spark.yarn.keytab` and `spark.yarn.principal` to override `zeppelin.server.kerberos.keytab` and `zeppelin.server.kerberos.principal`.
+
+
 ## User Impersonation
 
 In yarn mode, the user who launch the zeppelin server will be used to launch the spark yarn application. This is not a good practise.
@@ -428,10 +496,6 @@ you need to enable user impersonation for more security control. In order the en
 impersonate in `zeppelin-site.xml`.
 
 
-## Setting up Zeppelin with Kerberos
-Logical setup with Zeppelin, Kerberos Key Distribution Center (KDC), and Spark on YARN:
-
-<img src="{{BASE_PATH}}/assets/themes/zeppelin/img/docs-img/kdc_zeppelin.png">
 
 ## Deprecate Spark 2.2 and earlier versions
 Starting from 0.9, Zeppelin deprecate Spark 2.2 and earlier versions. So you will see a warning message when you use Spark 2.2 and earlier.

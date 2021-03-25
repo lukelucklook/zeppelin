@@ -22,12 +22,10 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.apache.zeppelin.conf.ZeppelinConfiguration;
-import org.apache.zeppelin.helium.HeliumConf;
+import org.apache.zeppelin.healthcheck.HealthChecks;
 import org.apache.zeppelin.interpreter.InterpreterInfoSaving;
 import org.apache.zeppelin.interpreter.InterpreterSetting;
 import org.apache.zeppelin.notebook.NotebookAuthorizationInfoSaving;
-import org.apache.zeppelin.user.Credentials;
-import org.apache.zeppelin.user.CredentialsInfoSaving;
 import org.apache.zeppelin.util.ReflectionUtils;
 
 import java.io.IOException;
@@ -42,6 +40,8 @@ import java.io.IOException;
  *
  */
 public abstract class ConfigStorage {
+
+  protected static final String STORAGE_HEALTHCHECK_NAME = "ConfigStorage";
 
   private static ConfigStorage instance;
 
@@ -82,8 +82,7 @@ public abstract class ConfigStorage {
 
   protected InterpreterInfoSaving buildInterpreterInfoSaving(String json) {
     //TODO(zjffdu) This kind of post processing is ugly.
-    JsonParser jsonParser = new JsonParser();
-    JsonObject jsonObject = jsonParser.parse(json).getAsJsonObject();
+    JsonObject jsonObject = JsonParser.parseString(json).getAsJsonObject();
     InterpreterInfoSaving infoSaving = InterpreterInfoSaving.fromJson(json);
     for (InterpreterSetting interpreterSetting : infoSaving.interpreterSettings.values()) {
       // Always use separate interpreter process
@@ -100,6 +99,7 @@ public abstract class ConfigStorage {
 
   @VisibleForTesting
   public static void reset() {
+    HealthChecks.getHealthCheckLivenessRegistry().unregister(STORAGE_HEALTHCHECK_NAME);
     instance = null;
   }
 }

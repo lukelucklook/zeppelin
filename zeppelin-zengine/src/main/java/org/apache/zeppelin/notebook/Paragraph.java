@@ -28,11 +28,9 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.apache.commons.lang.StringUtils;
-import org.apache.commons.lang.exception.ExceptionUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.zeppelin.common.JsonSerializable;
 import org.apache.zeppelin.display.AngularObject;
 import org.apache.zeppelin.display.AngularObjectRegistry;
@@ -40,19 +38,18 @@ import org.apache.zeppelin.display.GUI;
 import org.apache.zeppelin.display.Input;
 import org.apache.zeppelin.helium.HeliumPackage;
 import org.apache.zeppelin.interpreter.Constants;
+import org.apache.zeppelin.interpreter.ExecutionContext;
 import org.apache.zeppelin.interpreter.Interpreter;
 import org.apache.zeppelin.interpreter.Interpreter.FormType;
 import org.apache.zeppelin.interpreter.InterpreterContext;
 import org.apache.zeppelin.interpreter.InterpreterException;
 import org.apache.zeppelin.interpreter.InterpreterNotFoundException;
-import org.apache.zeppelin.interpreter.InterpreterOutput;
-import org.apache.zeppelin.interpreter.InterpreterOutputListener;
 import org.apache.zeppelin.interpreter.InterpreterResult;
 import org.apache.zeppelin.interpreter.InterpreterResult.Code;
 import org.apache.zeppelin.interpreter.InterpreterResultMessage;
-import org.apache.zeppelin.interpreter.InterpreterResultMessageOutput;
 import org.apache.zeppelin.interpreter.InterpreterSetting;
 import org.apache.zeppelin.interpreter.ManagedInterpreterGroup;
+import org.apache.zeppelin.interpreter.remote.RemoteInterpreter;
 import org.apache.zeppelin.interpreter.thrift.InterpreterCompletion;
 import org.apache.zeppelin.resource.ResourcePool;
 import org.apache.zeppelin.scheduler.Job;
@@ -74,15 +71,16 @@ import com.google.common.collect.Maps;
 public class Paragraph extends JobWithProgressPoller<InterpreterResult> implements Cloneable,
     JsonSerializable {
 
-  private static Logger LOGGER = LoggerFactory.getLogger(Paragraph.class);
-  private static Pattern REPL_PATTERN =
+  private static final Logger LOGGER = LoggerFactory.getLogger(Paragraph.class);
+  private static final Pattern REPL_PATTERN =
       Pattern.compile("(\\s*)%([\\w\\.]+)(\\(.*?\\))?.*", Pattern.DOTALL);
-  
+
   private String title;
   // text is composed of intpText and scriptText.
   private String text;
   private String user;
   private Date dateUpdated;
+  private int progress;
   // paragraph configs like isOpen, colWidth, etc
   private Map<String, Object> config = new HashMap<>();
   // form and parameter settings
@@ -95,15 +93,15 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
   private transient String intpText;
   private transient String scriptText;
   private transient Interpreter interpreter;
+  private transient String interpreterGroupId;
   private transient Note note;
   private transient AuthenticationInfo subject;
   // personalized
   private transient Map<String, Paragraph> userParagraphMap = new HashMap<>();
   private transient Map<String, String> localProperties = new HashMap<>();
-  // serialize runtimeInfos to frontend but not to note file (via gson's ExclusionStrategy)
+
   private Map<String, ParagraphRuntimeInfo> runtimeInfos = new HashMap<>();
   private transient List<InterpreterResultMessage> outputBuffer = new ArrayList<>();
-
 
 
   @VisibleForTesting
@@ -127,7 +125,7 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
     this.note = p2.note;
     this.settings.setParams(Maps.newHashMap(p2.settings.getParams()));
     this.settings.setForms(Maps.newLinkedHashMap(p2.settings.getForms()));
-    this.setConfig(Maps.newHashMap(p2.config));
+    this.setConfig(Maps.newHashMap(p2.getConfig()));
     this.setAuthenticationInfo(p2.getAuthenticationInfo());
     this.title = p2.title;
     this.text = p2.text;
@@ -136,7 +134,7 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
   }
 
   private static String generateId() {
-    return "paragraph_" + System.currentTimeMillis() + "_" + new SecureRandom().nextInt();
+    return "paragraph_" + System.currentTimeMillis() + "_" + Math.abs(new SecureRandom().nextInt());
   }
 
   public Map<String, Paragraph> getUserParagraphMap() {
@@ -193,40 +191,10 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
     // parse text to get interpreter component
     if (this.text != null) {
       // clean localProperties, otherwise previous localProperties will be used for the next run
-      this.localProperties.clear();
-      Matcher matcher = REPL_PATTERN.matcher(this.text);
-      if (matcher.matches()) {
-        String headingSpace = matcher.group(1);
-        setIntpText(matcher.group(2));
-
-        if (matcher.groupCount() == 3 && matcher.group(3) != null) {
-          String localPropertiesText = matcher.group(3);
-          String[] splits = localPropertiesText.substring(1, localPropertiesText.length() -1)
-              .split(",");
-          for (String split : splits) {
-            String[] kv = split.split("=");
-            if (StringUtils.isBlank(split) || kv.length == 0) {
-              continue;
-            }
-            if (kv.length > 2) {
-              throw new RuntimeException("Invalid paragraph properties format: " + split);
-            }
-            if (kv.length == 1) {
-              localProperties.put(kv[0].trim(), kv[0].trim());
-            } else {
-              localProperties.put(kv[0].trim(), kv[1].trim());
-            }
-          }
-          this.scriptText = this.text.substring(headingSpace.length() + intpText.length() +
-              localPropertiesText.length() + 1).trim();
-        } else {
-          this.scriptText = this.text.substring(headingSpace.length() + intpText.length() + 1).trim();
-        }
-        config.putAll(localProperties);
-      } else {
-        setIntpText("");
-        this.scriptText = this.text.trim();
-      }
+      ParagraphTextParser.ParseResult result = ParagraphTextParser.parse(this.text);
+      localProperties = result.getLocalProperties();
+      setIntpText(result.getIntpText());
+      this.scriptText = result.getScriptText();
     }
   }
 
@@ -275,12 +243,19 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
   }
 
   public Interpreter getBindedInterpreter() throws InterpreterNotFoundException {
-    return this.note.getInterpreterFactory().getInterpreter(user, note.getId(), intpText,
-        note.getDefaultInterpreterGroup());
+    ExecutionContext executionContext = note.getExecutionContext();
+    executionContext.setUser(user);
+    executionContext.setInterpreterGroupId(interpreterGroupId);
+    return this.note.getInterpreterFactory().getInterpreter(intpText, executionContext);
   }
 
+  @VisibleForTesting
   public void setInterpreter(Interpreter interpreter) {
     this.interpreter = interpreter;
+  }
+
+  public Interpreter getInterpreter() {
+    return interpreter;
   }
 
   public List<InterpreterCompletion> completion(String buffer, int cursor) {
@@ -292,7 +267,7 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
       return new ArrayList<>();
     }
     cursor = calculateCursorPosition(buffer, cursor);
-    InterpreterContext interpreterContext = getInterpreterContext(null);
+    InterpreterContext interpreterContext = getInterpreterContext();
 
     try {
       return this.interpreter.completion(this.scriptText, cursor, interpreterContext);
@@ -306,7 +281,10 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
     if (this.scriptText.isEmpty()) {
       return 0;
     }
-    int countCharactersBeforeScript = buffer.indexOf(this.scriptText);
+    // Try to find the right cursor from this startPos, otherwise you may get the wrong cursor.
+    // e.g.  %spark.pyspark  spark.
+    int startPos = this.intpText == null ? 0 : this.intpText.length();
+    int countCharactersBeforeScript = buffer.indexOf(this.scriptText, startPos);
     if (countCharactersBeforeScript > 0) {
       cursor -= countCharactersBeforeScript;
     }
@@ -323,7 +301,8 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
   public int progress() {
     try {
       if (this.interpreter != null) {
-        return this.interpreter.getProgress(getInterpreterContext(null));
+        this.progress = this.interpreter.getProgress(getInterpreterContext());
+        return this.progress;
       } else {
         return 0;
       }
@@ -346,7 +325,17 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
   }
 
   public boolean execute(boolean blocking) {
+    return execute(null, blocking);
+  }
+
+  /**
+   * Return true only when paragraph run successfully with state of FINISHED.
+   * @param blocking
+   * @return
+   */
+  public boolean execute(String interpreterGroupId, boolean blocking) {
     try {
+      this.interpreterGroupId = interpreterGroupId;
       this.interpreter = getBindedInterpreter();
       InterpreterSetting interpreterSetting = ((ManagedInterpreterGroup)
               interpreter.getInterpreterGroup()).getInterpreterSetting();
@@ -354,17 +343,28 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
               = interpreterSetting.getConfig(interpreter.getClassName());
       mergeConfig(config);
 
+      // clear output
+      setResult(null);
+      cleanOutputBuffer();
+      cleanRuntimeInfos();
+
+      setStatus(Status.PENDING);
+
       if (shouldSkipRunParagraph()) {
         LOGGER.info("Skip to run blank paragraph. {}", getId());
         setStatus(Job.Status.FINISHED);
         return true;
       }
-      setStatus(Status.READY);
 
-      if (getConfig().get("enabled") == null || (Boolean) getConfig().get("enabled")) {
+      if (isEnabled()) {
         setAuthenticationInfo(getAuthenticationInfo());
         interpreter.getScheduler().submit(this);
+       } else {
+        LOGGER.info("Skip disabled paragraph. {}", getId());
+        setStatus(Job.Status.FINISHED);
+        return true;
       }
+
 
       if (blocking) {
         while (!getStatus().isCompleted()) {
@@ -385,13 +385,31 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
       setReturn(intpResult, e);
       setStatus(Job.Status.ERROR);
       return false;
+    } catch (Throwable e) {
+      InterpreterResult intpResult =
+              new InterpreterResult(InterpreterResult.Code.ERROR,
+                      "Unexpected exception: " + ExceptionUtils.getStackTrace(e));
+      setReturn(intpResult, e);
+      setStatus(Job.Status.ERROR);
+      return false;
+    }
+  }
+
+  @Override
+  public void setStatus(Status status) {
+    super.setStatus(status);
+    // reset interpreterGroupId when paragraph is completed.
+    if (status.isCompleted()) {
+      this.interpreterGroupId = null;
     }
   }
 
   @Override
   protected InterpreterResult jobRun() throws Throwable {
     try {
-      this.runtimeInfos.clear();
+      if (localProperties.getOrDefault("isRecover", "false").equals("false")) {
+        this.runtimeInfos.clear();
+      }
       this.interpreter = getBindedInterpreter();
       if (this.interpreter == null) {
         LOGGER.error("Can not find interpreter name " + intpText);
@@ -479,22 +497,20 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
           return getReturn();
         }
 
-        context.out.flush();
-        List<InterpreterResultMessage> resultMessages = context.out.toInterpreterResultMessage();
-        resultMessages.addAll(ret.message());
-        InterpreterResult res = new InterpreterResult(ret.code(), resultMessages);
         Paragraph p = getUserParagraph(getUser());
         if (null != p) {
-          p.setResult(res);
+          p.setResult(ret);
           p.settings.setParams(settings.getParams());
         }
 
-        return res;
+        return ret;
       } finally {
         InterpreterContext.remove();
       }
     } catch (Exception e) {
       return new InterpreterResult(Code.ERROR, ExceptionUtils.getStackTrace(e));
+    } finally {
+      localProperties.remove("isRecover");
     }
   }
 
@@ -504,7 +520,7 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
       return true;
     }
     try {
-      interpreter.cancel(getInterpreterContext(null));
+      interpreter.cancel(getInterpreterContext());
     } catch (InterpreterException e) {
       throw new RuntimeException(e);
     }
@@ -513,76 +529,34 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
   }
 
   private InterpreterContext getInterpreterContext() {
-    final Paragraph self = this;
-
-    return getInterpreterContext(
-        new InterpreterOutput(
-            new InterpreterOutputListener() {
-              ParagraphJobListener paragraphJobListener = (ParagraphJobListener) getListener();
-
-              @Override
-              public void onAppend(int index, InterpreterResultMessageOutput out, byte[] line) {
-                if (null != paragraphJobListener) {
-                  paragraphJobListener.onOutputAppend(self, index, new String(line));
-                }
-              }
-
-              @Override
-              public void onUpdate(int index, InterpreterResultMessageOutput out) {
-                try {
-                  if (null != paragraphJobListener) {
-                    paragraphJobListener.onOutputUpdate(
-                        self, index, out.toInterpreterResultMessage());
-                  }
-                } catch (IOException e) {
-                  LOGGER.error(e.getMessage(), e);
-                }
-              }
-
-              @Override
-              public void onUpdateAll(InterpreterOutput out) {
-                try {
-                  List<InterpreterResultMessage> messages = out.toInterpreterResultMessage();
-                  if (null != paragraphJobListener) {
-                    paragraphJobListener.onOutputUpdateAll(self, messages);
-                  }
-                  updateParagraphResult(messages);
-                  outputBuffer.clear();
-                } catch (IOException e) {
-                  LOGGER.error(e.getMessage(), e);
-                }
-              }
-
-      private void updateParagraphResult(List<InterpreterResultMessage> msgs) {
-        // update paragraph results
-        InterpreterResult result = new InterpreterResult(Code.SUCCESS, msgs);
-        setReturn(result, null);
-      }
-    }));
-  }
-
-  private InterpreterContext getInterpreterContext(InterpreterOutput output) {
     AngularObjectRegistry registry = null;
     ResourcePool resourcePool = null;
-
+    String replName = null;
     if (this.interpreter != null) {
       registry = this.interpreter.getInterpreterGroup().getAngularObjectRegistry();
       resourcePool = this.interpreter.getInterpreterGroup().getResourcePool();
+      InterpreterSetting interpreterSetting = ((ManagedInterpreterGroup)
+              interpreter.getInterpreterGroup()).getInterpreterSetting();
+      replName = interpreterSetting.getName();
     }
 
     Credentials credentials = note.getCredentials();
     if (subject != null) {
-      UserCredentials userCredentials =
-          credentials.getUserCredentials(subject.getUser());
+      UserCredentials userCredentials;
+      try {
+        userCredentials = credentials.getUserCredentials(subject.getUser());
+      } catch (IOException e) {
+        LOGGER.warn("Unable to get Usercredentials. Working with empty UserCredentials", e);
+        userCredentials = new UserCredentials();
+      }
       subject.setUserCredentials(userCredentials);
     }
 
-    InterpreterContext interpreterContext =
-        InterpreterContext.builder()
+    return InterpreterContext.builder()
             .setNoteId(note.getId())
             .setNoteName(note.getName())
             .setParagraphId(getId())
-            .setReplName(intpText)
+            .setReplName(replName)
             .setParagraphTitle(title)
             .setParagraphText(text)
             .setAuthenticationInfo(subject)
@@ -592,9 +566,7 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
             .setNoteGUI(getNoteGui())
             .setAngularObjectRegistry(registry)
             .setResourcePool(resourcePool)
-            .setInterpreterOut(output)
             .build();
-    return interpreterContext;
   }
 
   public void setStatusToUserParagraph(Status status) {
@@ -611,7 +583,7 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
   // NOTE: function setConfig(...) will overwrite all configuration
   // Merge configuration, you need to use function mergeConfig(...)
   public void setConfig(Map<String, Object> config) {
-    this.config = config;
+    this.config = Maps.newHashMap(config);
   }
 
   // [ZEPPELIN-3919] Paragraph config default value can be customized
@@ -626,6 +598,10 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
   //    Need to delete the existing configuration of this paragraph,
   //    update with the specified interpreter configuration
   public void mergeConfig(Map<String, Object> newConfig) {
+    this.config.putAll(newConfig);
+  }
+
+  public void updateConfig(Map<String, String> newConfig) {
     this.config.putAll(newConfig);
   }
 
@@ -695,8 +671,10 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
 
   public boolean isValidInterpreter(String replName) {
     try {
-      return note.getInterpreterFactory().getInterpreter(user, note.getId(), replName,
-          note.getDefaultInterpreterGroup()) != null;
+      ExecutionContext executionContext = note.getExecutionContext();
+      executionContext.setUser(user);
+      executionContext.setInterpreterGroupId(interpreterGroupId);
+      return note.getInterpreterFactory().getInterpreter(replName, executionContext) != null;
     } catch (InterpreterNotFoundException e) {
       return false;
     }
@@ -741,6 +719,22 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
     this.results = new InterpreterResult(Code.SUCCESS);
     for (InterpreterResultMessage buffer : outputBuffer) {
       results.add(buffer);
+    }
+  }
+
+  @VisibleForTesting
+  public void waitUntilFinished() throws Exception {
+    while(!isTerminated()) {
+      LOGGER.debug("Wait for paragraph to be finished");
+      Thread.sleep(1000);
+    }
+  }
+
+  @VisibleForTesting
+  public void waitUntilRunning() throws Exception {
+    while(!isRunning()) {
+      LOGGER.debug("Wait for paragraph to be running");
+      Thread.sleep(1000);
     }
   }
 
@@ -805,11 +799,11 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
 
   @Override
   public String toJson() {
-    return Note.getGson().toJson(this);
+    return Note.getGSON().toJson(this);
   }
 
   public static Paragraph fromJson(String json) {
-    return Note.getGson().fromJson(json, Paragraph.class);
+    return Note.getGSON().fromJson(json, Paragraph.class);
   }
 
   public void updateOutputBuffer(int index, InterpreterResult.Type type, String output) {
@@ -821,6 +815,53 @@ public class Paragraph extends JobWithProgressPoller<InterpreterResult> implemen
     } else {
       LOGGER.warn("Get output of index: " + index + ", but there's only " +
               outputBuffer.size() + " output in outputBuffer");
+    }
+  }
+
+  public void recover() {
+    try {
+      LOGGER.info("Recovering paragraph: " + getId());
+
+      this.interpreter = getBindedInterpreter();
+      InterpreterSetting interpreterSetting = ((ManagedInterpreterGroup)
+              interpreter.getInterpreterGroup()).getInterpreterSetting();
+      Map<String, Object> config
+              = interpreterSetting.getConfig(interpreter.getClassName());
+      mergeConfig(config);
+
+      if (shouldSkipRunParagraph()) {
+        LOGGER.info("Skip to run blank paragraph. {}", getId());
+        setStatus(Job.Status.FINISHED);
+        return ;
+      }
+      setStatus(Status.READY);
+      localProperties.put("isRecover", "true");
+      for (List<Interpreter> sessions : this.interpreter.getInterpreterGroup().values()) {
+        for (Interpreter intp : sessions) {
+          // exclude ConfInterpreter
+          if (intp instanceof RemoteInterpreter) {
+            ((RemoteInterpreter) intp).setOpened(true);
+          }
+        }
+      }
+
+      if (getConfig().get("enabled") == null || (Boolean) getConfig().get("enabled")) {
+        setAuthenticationInfo(getAuthenticationInfo());
+        interpreter.getScheduler().submit(this);
+      }
+
+    } catch (InterpreterNotFoundException e) {
+      InterpreterResult intpResult =
+              new InterpreterResult(InterpreterResult.Code.ERROR,
+                      String.format("Interpreter %s not found", this.intpText));
+      setReturn(intpResult, e);
+      setStatus(Job.Status.ERROR);
+    } catch (Throwable e) {
+      InterpreterResult intpResult =
+              new InterpreterResult(InterpreterResult.Code.ERROR,
+                      "Unexpected exception: " + ExceptionUtils.getStackTrace(e));
+      setReturn(intpResult, e);
+      setStatus(Job.Status.ERROR);
     }
   }
 }

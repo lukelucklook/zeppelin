@@ -17,6 +17,7 @@
 
 package org.apache.zeppelin.interpreter;
 
+import com.google.common.collect.Maps;
 import org.apache.zeppelin.display.AngularObjectRegistry;
 import org.apache.zeppelin.display.GUI;
 import org.apache.zeppelin.interpreter.remote.RemoteInterpreterEventClient;
@@ -25,12 +26,14 @@ import org.apache.zeppelin.user.AuthenticationInfo;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Interpreter context
  */
 public class InterpreterContext {
   private static final ThreadLocal<InterpreterContext> threadIC = new ThreadLocal<>();
+  private static final ConcurrentHashMap<Thread, InterpreterContext> allContexts = new ConcurrentHashMap<>();
 
   public InterpreterOutput out;
 
@@ -40,10 +43,16 @@ public class InterpreterContext {
 
   public static void set(InterpreterContext ic) {
     threadIC.set(ic);
+    allContexts.put(Thread.currentThread(), ic);
   }
 
   public static void remove() {
     threadIC.remove();
+    allContexts.remove(Thread.currentThread());
+  }
+
+  public static ConcurrentHashMap<Thread, InterpreterContext> getAllContexts() {
+    return allContexts;
   }
 
   private String noteId;
@@ -114,7 +123,9 @@ public class InterpreterContext {
     }
 
     public Builder setConfig(Map<String, Object> config) {
-      context.config = config;
+      if (config != null) {
+        context.config = Maps.newHashMap(config);
+      }
       return this;
     }
 
@@ -159,7 +170,6 @@ public class InterpreterContext {
     }
 
     public InterpreterContext build() {
-      InterpreterContext.set(context);
       return context;
     }
   }
@@ -221,6 +231,10 @@ public class InterpreterContext {
     return Double.parseDouble(localProperties.getOrDefault(key, defaultValue + ""));
   }
 
+  public boolean getBooleanLocalProperty(String key, boolean defaultValue) {
+    return Boolean.parseBoolean(localProperties.getOrDefault(key, defaultValue + ""));
+  }
+
   public AuthenticationInfo getAuthenticationInfo() {
     return authenticationInfo;
   }
@@ -241,8 +255,16 @@ public class InterpreterContext {
     return angularObjectRegistry;
   }
 
+  public void setAngularObjectRegistry(AngularObjectRegistry angularObjectRegistry) {
+    this.angularObjectRegistry = angularObjectRegistry;
+  }
+
   public ResourcePool getResourcePool() {
     return resourcePool;
+  }
+
+  public void setResourcePool(ResourcePool resourcePool) {
+    this.resourcePool = resourcePool;
   }
 
   public String getInterpreterClassName() {

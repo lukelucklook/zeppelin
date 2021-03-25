@@ -212,7 +212,7 @@ function ParagraphCtrl($scope, $rootScope, $route, $window, $routeParams, $locat
         $scope.paragraph.results.msg = [];
       }
 
-      let update = ($scope.paragraph.results.msg[data.index]) ? true : false;
+      let update = typeof $scope.paragraph.results.msg[data.index] !== 'undefined';
 
       $scope.paragraph.results.msg[data.index] = {
         data: data.data,
@@ -276,9 +276,6 @@ function ParagraphCtrl($scope, $rootScope, $route, $window, $routeParams, $locat
   };
 
   $scope.cancelParagraph = function(paragraph) {
-    if ($scope.isNoteRunning) {
-      return;
-    }
     console.log('Cancel %o', paragraph.id);
     websocketMsgSrv.cancelParagraphRun(paragraph.id);
   };
@@ -459,6 +456,7 @@ function ParagraphCtrl($scope, $rootScope, $route, $window, $routeParams, $locat
     if (!paragraphText || $scope.isRunning($scope.paragraph)) {
       return;
     }
+
     const magic = SpellResult.extractMagic(paragraphText);
 
     if (heliumService.getSpellByMagic(magic)) {
@@ -1103,10 +1101,10 @@ function ParagraphCtrl($scope, $rootScope, $route, $window, $routeParams, $locat
     }
   };
 
-  let getEditorSetting = function(paragraph, magic) {
+  let getEditorSetting = function(paragraph, pragraphText) {
     let deferred = $q.defer();
     if (!$scope.revisionView) {
-      websocketMsgSrv.getEditorSetting(paragraph.id, magic);
+      websocketMsgSrv.getEditorSetting(paragraph.id, pragraphText);
       $timeout(
         $scope.$on('editorSetting', function(event, data) {
           if (paragraph.id === data.paragraphId) {
@@ -1139,7 +1137,7 @@ function ParagraphCtrl($scope, $rootScope, $route, $window, $routeParams, $locat
         let magic = getParagraphMagic(paragraphText);
         if (editorSetting.magic !== magic) {
           editorSetting.magic = magic;
-          getEditorSetting($scope.paragraph, magic)
+          getEditorSetting($scope.paragraph, paragraphText)
             .then(function(setting) {
               setEditorLanguage(session, setting.editor.language);
               _.merge($scope.paragraph.config.editorSetting, setting.editor);
@@ -1629,6 +1627,12 @@ function ParagraphCtrl($scope, $rootScope, $route, $window, $routeParams, $locat
   $scope.$on('updateProgress', function(event, data) {
     if (data.id === $scope.paragraph.id) {
       $scope.currentProgress = data.progress;
+    }
+  });
+
+  $scope.$on('updateStatus', function(event, data) {
+    if (data.id === $scope.paragraph.id) {
+      $scope.paragraph.status = data.status;
     }
   });
 

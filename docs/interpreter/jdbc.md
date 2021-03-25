@@ -139,11 +139,6 @@ The JDBC interpreter properties are defined by default like below.
     <td>120</td>
     <td>Time to live sql completer in seconds (-1 to update everytime, 0 to disable update)</td>
   </tr>
-  <tr>
-    <td>default.splitQueries</td>
-    <td>false</td>
-    <td>Each query is executed apart and returns the result</td>
-  </tr>
 </table>
 
 If you want to connect other databases such as `Mysql`, `Redshift` and `Hive`, you need to edit the property values.
@@ -160,6 +155,70 @@ The last step is **Dependency Setting**. Since Zeppelin only includes `PostgreSQ
 <img src="{{BASE_PATH}}/assets/themes/zeppelin/img/docs-img/edit_dependencies.png" width="600px" />
 
 That's it. You can find more JDBC connection setting examples([Mysql](#mysql), [MariaDB](#mariadb), [Redshift](#redshift), [Apache Hive](#apache-hive), [Apache Phoenix](#apache-phoenix), and [Apache Tajo](#apache-tajo)) in [this section](#examples).
+
+## JDBC Interpreter Datasource Pool Configuration
+The Jdbc interpreter uses the connection pool technology, and supports users to do some personal configuration of the connection pool. For example, we can configure `default.validationQuery='select 1'` and `default.testOnBorrow=true` in the Interpreter configuration to avoid the "Invalid SessionHandle" runtime error caused by Session timeout when connecting to HiveServer2 through JDBC interpreter.
+
+The Jdbc Interpreter supports the following database connection pool configurations:
+
+<table class="table-configuration">
+  <tr>
+    <th>Property Name</th>
+    <th>Default</th>
+    <th>Description</th>
+  </tr>
+  <tr>
+    <td>testOnBorrow</td>
+    <td>false</td>
+    <td>The indication of whether objects will be validated before being borrowed from the pool. If the object fails to validate, it will be dropped from the pool, and we will attempt to borrow another.</td>
+  </tr>
+  <tr>
+    <td>testOnCreate</td>
+    <td>false</td>
+    <td>The indication of whether objects will be validated after creation. If the object fails to validate, the borrow attempt that triggered the object creation will fail.</td>
+  </tr>
+  <tr>
+    <td>testOnReturn</td>
+    <td>false</td>
+    <td>The indication of whether objects will be validated before being returned to the pool.</td>
+  </tr>
+  <tr>
+    <td>testWhileIdle</td>
+    <td>false</td>
+    <td>The indication of whether objects will be validated by the idle object evictor (if any). If an object fails to validate, it will be dropped from the pool.</td>
+  </tr>
+  <tr>
+    <td>timeBetweenEvictionRunsMillis</td>
+    <td>-1L</td>
+    <td>The number of milliseconds to sleep between runs of the idle object evictor thread. When non-positive, no idle object evictor thread will be run.</td>
+  </tr>
+  <tr>
+    <td>maxWaitMillis</td>
+    <td>-1L</td>
+    <td>The maximum number of milliseconds that the pool will wait (when there are no available connections) for a connection to be returned before throwing an exception, or -1 to wait indefinitely.</td>
+  </tr>
+  <tr>
+    <td>maxIdle</td>
+    <td>8</td>
+    <td>The maximum number of connections that can remain idle in the pool, without extra ones being released, or negative for no limit.</td>
+  </tr>
+  <tr>
+    <td>minIdle</td>
+    <td>0</td>
+    <td>The minimum number of connections that can remain idle in the pool, without extra ones being created, or zero to create none.</td>
+  </tr>
+  <tr>
+    <td>maxTotal</td>
+    <td>-1</td>
+    <td>The maximum number of active connections that can be allocated from this pool at the same time, or negative for no limit.</td>
+  </tr>
+  <tr>
+    <td>validationQuery</td>
+    <td>show database</td>
+    <td>The SQL query that will be used to validate connections from this pool before returning them to the caller. If specified, this query MUST be an SQL SELECT statement that returns at least one row. If not specified, connections will be validation by calling the isValid() method.</td>
+  </tr>
+</table>
+
 
 ## More properties
 There are more JDBC interpreter properties you can specify like below.
@@ -244,6 +303,19 @@ If the paragraph is `FINISHED` without any errors, a new paragraph will be autom
 So you don't need to type this prefix in every paragraphs' header.
 
 <img src="{{BASE_PATH}}/assets/themes/zeppelin/img/docs-img/run_paragraph_with_jdbc.png" width="600px" />
+
+
+### Multiple SQL statements
+
+You can write multiple sql statements in one paragraph, just separate them with semi-colon. e.g
+
+```sql
+
+USE zeppelin_demo;
+
+CREATE TABLE pet (name VARCHAR(20), owner VARCHAR(20),
+       species VARCHAR(20), sex CHAR(1), birth DATE, death DATE);
+```
 
 ### Apply Zeppelin Dynamic Forms
 

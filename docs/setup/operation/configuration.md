@@ -24,12 +24,14 @@ limitations under the License.
 <div id="toc"></div>
 
 ## Zeppelin Properties
-There are two locations you can configure Apache Zeppelin.
 
-* **Environment variables** can be defined `conf/zeppelin-env.sh`(`conf\zeppelin-env.cmd` for Windows).
-* **Java properties** can be defined in `conf/zeppelin-site.xml`.
+Zeppelin can be configured via several sources.
 
-If both are defined, then the **environment variables** will take priority.
+Sources descending by priority:
+ - environment variables can be defined `conf/zeppelin-env.sh`(`conf\zeppelin-env.cmd` for Windows).
+ - system properties
+ - configuration file can be defined in `conf/zeppelin-site.xml`
+
 > Mouse hover on each property and click <i class="fa fa-link fa-flip-horizontal"></i> then you can get a link for that.
 
 <table class="table-configuration">
@@ -61,20 +63,20 @@ If both are defined, then the **environment variables** will take priority.
   </tr>
   <tr>
     <td><h6 class="properties">ZEPPELIN_JMX_ENABLE</h6></td>
-    <td><h6 class="properties">N/A</h6></td>
-    <td></td>
+    <td><h6 class="properties">zeppelin.jmx.enable</h6></td>
+    <td>false</td>
     <td>Enable JMX by defining "true"</td>
   </tr>
   <tr>
     <td><h6 class="properties">ZEPPELIN_JMX_PORT</h6></td>
-    <td><h6 class="properties">N/A</h6></td>
+    <td><h6 class="properties">zeppelin.jmx.port</h6></td>
     <td>9996</td>
     <td>Port number which JMX uses</td>
   </tr>
   <tr>
     <td><h6 class="properties">ZEPPELIN_MEM</h6></td>
     <td>N/A</td>
-    <td>-Xmx1024m -XX:MaxPermSize=512m</td>
+    <td>-Xmx1024m -XX:MaxMetaspaceSize=512m</td>
     <td>JVM mem options</td>
   </tr>
   <tr>
@@ -174,6 +176,30 @@ If both are defined, then the **environment variables** will take priority.
     <td></td>
   </tr>
   <tr>
+    <td><h6 class="properties">ZEPPELIN_SSL_PEM_KEY</h6></td>
+    <td><h6 class="properties">zeppelin.ssl.pem.key</h6></td>
+    <td></td>
+    <td>This directive points to the PEM-encoded private key file for the server.</td>
+  </tr>
+  <tr>
+    <td><h6 class="properties">ZEPPELIN_SSL_PEM_KEY_PASSWORD</h6></td>
+    <td><h6 class="properties">zeppelin.ssl.pem.key.password</h6></td>
+    <td></td>
+    <td>Password of the PEM-encoded private key.</td>
+  </tr>
+  <tr>
+    <td><h6 class="properties">ZEPPELIN_SSL_PEM_CERT</h6></td>
+    <td><h6 class="properties">zeppelin.ssl.pem.cert</h6></td>
+    <td></td>
+    <td>This directive points to a file with certificate data in PEM format.</td>
+  </tr>
+  <tr>
+    <td><h6 class="properties">ZEPPELIN_SSL_PEM_CA</h6></td>
+    <td><h6 class="properties">zeppelin.ssl.pem.ca</h6></td>
+    <td></td>
+    <td>This directive sets the all-in-one file where you can assemble the Certificates of Certification Authorities (CA) whose clients you deal with. These are used for Client Authentication. Such a file is simply the concatenation of the various PEM-encoded Certificate files.</td>
+  </tr>
+  <tr>
     <td><h6 class="properties">ZEPPELIN_NOTEBOOK_HOMESCREEN</h6></td>
     <td><h6 class="properties">zeppelin.notebook.homescreen</h6></td>
     <td></td>
@@ -240,6 +266,18 @@ If both are defined, then the **environment variables** will take priority.
     <td>Save notebooks to S3 with server-side encryption enabled</td>
   </tr>
   <tr>
+      <td><h6 class="properties">ZEPPELIN_NOTEBOOK_S3_CANNED_ACL</h6></td>
+      <td><h6 class="properties">zeppelin.notebook.s3.cannedAcl</h6></td>
+      <td></td>
+      <td>Save notebooks to S3 with the given [Canned ACL](https://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/services/s3/model/CannedAccessControlList.html) which determines the S3 permissions.</td>
+  </tr>
+  <tr>
+      <td><h6 class="properties">ZEPPELIN_NOTEBOOK_S3_PATH_STYLE_ACCESS</h6></td>
+      <td><h6 class="properties">zeppelin.notebook.s3.pathStyleAccess</h6></td>
+      <td>false</td>
+      <td>Access S3 bucket using path style</td>
+  </tr>
+  <tr>
     <td><h6 class="properties">ZEPPELIN_NOTEBOOK_S3_SIGNEROVERRIDE</h6></td>
     <td><h6 class="properties">zeppelin.notebook.s3.signerOverride</h6></td>
     <td></td>
@@ -290,7 +328,7 @@ If both are defined, then the **environment variables** will take priority.
   <tr>
     <td><h6 class="properties">ZEPPELIN_INTERPRETER_DEP_MVNREPO</h6></td>
     <td><h6 class="properties">zeppelin.interpreter.dep.mvnRepo</h6></td>
-    <td>http://repo1.maven.org/maven2/</td>
+    <td>https://repo1.maven.org/maven2/</td>
     <td>Remote principal repository for interpreter's additional dependency loading</td>
   </tr>
   <tr>
@@ -394,7 +432,37 @@ If both are defined, then the **environment variables** will take priority.
     <td><h6 class="properties">zeppelin.k8s.template.dir</h6></td>
     <td>k8s</td>
     <td>Kubernetes yaml spec files</td>
-  </tr>  
+  </tr>
+  <tr>
+    <td><h6 class="properties">ZEPPELIN_K8S_SERVICE_NAME</h6></td>
+    <td><h6 class="properties">zeppelin.k8s.service.name</h6></td>
+    <td>zeppelin-server</td>
+    <td>Name of the Zeppelin server service resources</td>
+  </tr>
+  <tr>
+    <td><h6 class="properties">ZEPPELIN_K8S_TIMEOUT_DURING_PENDING</h6></td>
+    <td><h6 class="properties">zeppelin.k8s.timeout.during.pending</h6></td>
+    <td>true</td>
+    <td>Value to enable/disable timeout handling when starting Interpreter Pods. Caution: This can lead to an infinity loop</td>
+  </tr>
+  <tr>
+    <td><h6 class="properties">ZEPPELIN_METRIC_ENABLE_PROMETHEUS</h6></td>
+    <td><h6 class="properties">zeppelin.metric.enable.prometheus</h6></td>
+    <td>false</td>
+    <td>Value to enable/disable Prometheus metric endpoint on /metric</td>
+  </tr>
+  <tr>
+    <td><h6 class="properties">ZEPPELIN_NOTEBOOK_CRON_ENABLE</h6></td>
+    <td><h6 class="properties">zeppelin.notebook.cron.enable</h6></td>
+    <td>false</td>
+    <td>Value to enable/disable Cron support in Notes</td>
+  </tr>
+  <tr>
+    <td><h6 class="properties">ZEPPELIN_NOTEBOOK_CRON_FOLDERS</h6></td>
+    <td><h6 class="properties">zeppelin.notebook.cron.folders</h6></td>
+    <td></td>
+    <td>comma-separated list of folder, where cron is allowed</td>
+  </tr>
 </table>
 
 

@@ -54,11 +54,12 @@ public class SparkIRInterpreterTest extends IRInterpreterTest {
     return new SparkIRInterpreter(properties);
   }
 
+  @Override
   @Before
   public void setUp() throws InterpreterException {
     Properties properties = new Properties();
-    properties.setProperty("spark.master", "local");
-    properties.setProperty("spark.app.name", "test");
+    properties.setProperty(SparkStringConstants.MASTER_PROP_NAME, "local");
+    properties.setProperty(SparkStringConstants.APP_NAME_PROP_NAME, "test");
     properties.setProperty("zeppelin.spark.maxResult", "100");
     properties.setProperty("spark.r.backendConnectionTimeout", "10");
     properties.setProperty("zeppelin.spark.deprecatedMsg.show", "false");
@@ -144,7 +145,7 @@ public class SparkIRInterpreterTest extends IRInterpreterTest {
     InterpreterContext context = InterpreterContext.builder()
             .setNoteId("note_1")
             .setParagraphId("paragraph_1")
-            .setInterpreterOut(new InterpreterOutput(null))
+            .setInterpreterOut(new InterpreterOutput())
             .setLocalProperties(new HashMap<>())
             .setIntpEventClient(mockRemoteIntpEventClient)
             .build();

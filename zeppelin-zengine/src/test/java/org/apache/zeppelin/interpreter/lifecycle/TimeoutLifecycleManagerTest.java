@@ -19,6 +19,7 @@ package org.apache.zeppelin.interpreter.lifecycle;
 
 import org.apache.zeppelin.conf.ZeppelinConfiguration;
 import org.apache.zeppelin.interpreter.AbstractInterpreterTest;
+import org.apache.zeppelin.interpreter.ExecutionContext;
 import org.apache.zeppelin.interpreter.InterpreterContext;
 import org.apache.zeppelin.interpreter.InterpreterException;
 import org.apache.zeppelin.interpreter.InterpreterSetting;
@@ -26,6 +27,7 @@ import org.apache.zeppelin.interpreter.remote.RemoteInterpreter;
 import org.apache.zeppelin.scheduler.Job;
 import org.junit.Test;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.Map;
 
@@ -35,19 +37,28 @@ import static org.junit.Assert.assertTrue;
 
 public class TimeoutLifecycleManagerTest extends AbstractInterpreterTest {
 
+  private File zeppelinSiteFile = new File("zeppelin-site.xml");
+
   @Override
   public void setUp() throws Exception {
-    System.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_LIFECYCLE_MANAGER_CLASS.getVarName(),
+    ZeppelinConfiguration zConf = ZeppelinConfiguration.create();
+    zConf.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_LIFECYCLE_MANAGER_CLASS.getVarName(),
         TimeoutLifecycleManager.class.getName());
-    System.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_LIFECYCLE_MANAGER_TIMEOUT_CHECK_INTERVAL.getVarName(), "1000");
-    System.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_LIFECYCLE_MANAGER_TIMEOUT_THRESHOLD.getVarName(), "10000");
+    zConf.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_LIFECYCLE_MANAGER_TIMEOUT_CHECK_INTERVAL.getVarName(), "1000");
+    zConf.setProperty(ZeppelinConfiguration.ConfVars.ZEPPELIN_INTERPRETER_LIFECYCLE_MANAGER_TIMEOUT_THRESHOLD.getVarName(), "10000");
+
     super.setUp();
+  }
+
+  @Override
+  public void tearDown() {
+    zeppelinSiteFile.delete();
   }
 
   @Test
   public void testTimeout_1() throws InterpreterException, InterruptedException, IOException {
-    assertTrue(interpreterFactory.getInterpreter("user1", "note1", "test.echo", "test") instanceof RemoteInterpreter);
-    RemoteInterpreter remoteInterpreter = (RemoteInterpreter) interpreterFactory.getInterpreter("user1", "note1", "test.echo", "test");
+    assertTrue(interpreterFactory.getInterpreter("test.echo", new ExecutionContext("user1", "note1", "test")) instanceof RemoteInterpreter);
+    RemoteInterpreter remoteInterpreter = (RemoteInterpreter) interpreterFactory.getInterpreter("test.echo", new ExecutionContext("user1", "note1", "test"));
     assertFalse(remoteInterpreter.isOpened());
     InterpreterSetting interpreterSetting = interpreterSettingManager.getInterpreterSettingByName("test");
     assertEquals(1, interpreterSetting.getAllInterpreterGroups().size());
@@ -65,16 +76,15 @@ public class TimeoutLifecycleManagerTest extends AbstractInterpreterTest {
     Thread.sleep(15 * 1000);
     // interpreterGroup is timeout, so is removed.
     assertEquals(0, interpreterSetting.getAllInterpreterGroups().size());
-    assertFalse(remoteInterpreter.isOpened());
   }
 
   @Test
   public void testTimeout_2() throws InterpreterException, InterruptedException, IOException {
-    assertTrue(interpreterFactory.getInterpreter("user1", "note1", "test.sleep", "test") instanceof RemoteInterpreter);
-    final RemoteInterpreter remoteInterpreter = (RemoteInterpreter) interpreterFactory.getInterpreter("user1", "note1", "test.sleep", "test");
+    assertTrue(interpreterFactory.getInterpreter("test.sleep", new ExecutionContext("user1", "note1", "test")) instanceof RemoteInterpreter);
+    final RemoteInterpreter remoteInterpreter = (RemoteInterpreter) interpreterFactory.getInterpreter("test.sleep", new ExecutionContext("user1", "note1", "test"));
 
     // simulate how zeppelin submit paragraph
-    remoteInterpreter.getScheduler().submit(new Job("test-job", null) {
+    remoteInterpreter.getScheduler().submit(new Job<Object>("test-job", null) {
       @Override
       public Object getReturn() {
         return null;

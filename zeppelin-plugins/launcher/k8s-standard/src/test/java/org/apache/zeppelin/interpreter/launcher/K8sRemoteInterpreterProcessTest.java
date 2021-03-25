@@ -17,64 +17,45 @@
 
 package org.apache.zeppelin.interpreter.launcher;
 
-import org.junit.Test;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URL;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Properties;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import org.apache.zeppelin.interpreter.remote.RemoteInterpreterManagedProcess;
+import org.junit.Rule;
+import org.junit.Test;
+import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.PodStatus;
+import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.server.mock.KubernetesServer;
 
 public class K8sRemoteInterpreterProcessTest {
 
-  @Test
-  public void testGetHostPort() {
-    // given
-    Kubectl kubectl = mock(Kubectl.class);
-    when(kubectl.getNamespace()).thenReturn("default");
-
-    Properties properties = new Properties();
-    HashMap<String, String> envs = new HashMap<String, String>();
-
-    K8sRemoteInterpreterProcess intp = new K8sRemoteInterpreterProcess(
-        kubectl,
-        new File(".skip"),
-        "interpreter-container:1.0",
-        "shared_process",
-        "sh",
-        "shell",
-        properties,
-        envs,
-        "zeppelin.server.hostname",
-        "12320",
-        false,
-        "spark-container:1.0",
-        10);
-
-    // when
-    String host = intp.getHost();
-    int port = intp.getPort();
-
-    // then
-    assertEquals(String.format("%s.%s.svc", intp.getPodName(), kubectl.getNamespace()), intp.getHost());
-    assertEquals(12321, intp.getPort());
-  }
+  @Rule
+  public KubernetesServer server = new KubernetesServer(true, true);
 
   @Test
   public void testPredefinedPortNumbers() {
     // given
-    Kubectl kubectl = mock(Kubectl.class);
-    when(kubectl.getNamespace()).thenReturn("default");
-
     Properties properties = new Properties();
     HashMap<String, String> envs = new HashMap<String, String>();
 
     K8sRemoteInterpreterProcess intp = new K8sRemoteInterpreterProcess(
-        kubectl,
+        server.getClient(),
+        "default",
         new File(".skip"),
         "interpreter-container:1.0",
         "shared_process",
@@ -83,15 +64,18 @@ public class K8sRemoteInterpreterProcessTest {
         properties,
         envs,
         "zeppelin.server.hostname",
-        "12320",
+        12320,
         false,
         "spark-container:1.0",
-        10);
+        10,
+        10,
+        false,
+        false);
 
 
     // following values are hardcoded in k8s/interpreter/100-interpreter.yaml.
     // when change those values, update the yaml file as well.
-    assertEquals(12321, intp.getPort());
+    assertEquals("12321:12321", intp.getInterpreterPortRange());
     assertEquals(22321, intp.getSparkDriverPort());
     assertEquals(22322, intp.getSparkBlockmanagerPort());
   }
@@ -99,16 +83,14 @@ public class K8sRemoteInterpreterProcessTest {
   @Test
   public void testGetTemplateBindings() throws IOException {
     // given
-    Kubectl kubectl = mock(Kubectl.class);
-    when(kubectl.getNamespace()).thenReturn("default");
-
     Properties properties = new Properties();
     properties.put("my.key1", "v1");
     HashMap<String, String> envs = new HashMap<String, String>();
     envs.put("MY_ENV1", "V1");
 
     K8sRemoteInterpreterProcess intp = new K8sRemoteInterpreterProcess(
-        kubectl,
+        server.getClient(),
+        "default",
         new File(".skip"),
         "interpreter-container:1.0",
         "shared_process",
@@ -116,14 +98,17 @@ public class K8sRemoteInterpreterProcessTest {
         "shell",
         properties,
         envs,
-        "zeppelin.server.hostname",
-        "12320",
+        "zeppelin.server.service",
+        12320,
         false,
         "spark-container:1.0",
-        10);
+        10,
+        10,
+        false,
+        false);
 
     // when
-    Properties p = intp.getTemplateBindings();
+    Properties p = intp.getTemplateBindings(null);
 
     // then
     assertEquals("default", p.get("zeppelin.k8s.namespace"));
@@ -135,32 +120,30 @@ public class K8sRemoteInterpreterProcessTest {
     assertEquals("shell", p.get("zeppelin.k8s.interpreter.setting.name"));
     assertEquals(true , p.containsKey("zeppelin.k8s.interpreter.localRepo"));
     assertEquals("12321:12321" , p.get("zeppelin.k8s.interpreter.rpc.portRange"));
-    assertEquals("zeppelin.server.hostname" , p.get("zeppelin.k8s.server.rpc.host"));
-    assertEquals("12320" , p.get("zeppelin.k8s.server.rpc.portRange"));
+    assertEquals("zeppelin.server.service" , p.get("zeppelin.k8s.server.rpc.service"));
+    assertEquals(12320 , p.get("zeppelin.k8s.server.rpc.portRange"));
     assertEquals("v1", p.get("my.key1"));
     assertEquals("V1", envs.get("MY_ENV1"));
 
     envs = (HashMap<String, String>) p.get("zeppelin.k8s.envs");
-    assertEquals(true, envs.containsKey("SERVICE_DOMAIN"));
-    assertEquals(true, envs.containsKey("ZEPPELIN_HOME"));
+    assertTrue(envs.containsKey("SERVICE_DOMAIN"));
+    assertTrue(envs.containsKey("ZEPPELIN_HOME"));
   }
 
   @Test
   public void testGetTemplateBindingsForSpark() throws IOException {
     // given
-    Kubectl kubectl = mock(Kubectl.class);
-    when(kubectl.getNamespace()).thenReturn("default");
-
     Properties properties = new Properties();
     properties.put("my.key1", "v1");
-    properties.put("master", "k8s://http://api");
+    properties.put("spark.master", "k8s://http://api");
     HashMap<String, String> envs = new HashMap<String, String>();
     envs.put("MY_ENV1", "V1");
     envs.put("SPARK_SUBMIT_OPTIONS", "my options");
     envs.put("SERVICE_DOMAIN", "mydomain");
 
     K8sRemoteInterpreterProcess intp = new K8sRemoteInterpreterProcess(
-        kubectl,
+        server.getClient(),
+        "default",
         new File(".skip"),
         "interpreter-container:1.0",
         "shared_process",
@@ -168,14 +151,17 @@ public class K8sRemoteInterpreterProcessTest {
         "myspark",
         properties,
         envs,
-        "zeppelin.server.hostname",
-        "12320",
+        "zeppelin.server.service",
+        12320,
         false,
         "spark-container:1.0",
-        10);
+        10,
+        10,
+        false,
+        false);
 
     // when
-    Properties p = intp.getTemplateBindings();
+    Properties p = intp.getTemplateBindings("mytestUser");
 
     // then
     assertEquals("spark-container:1.0", p.get("zeppelin.k8s.spark.container.image"));
@@ -186,11 +172,425 @@ public class K8sRemoteInterpreterProcessTest {
 
     String sparkSubmitOptions = envs.get("SPARK_SUBMIT_OPTIONS");
     assertTrue(sparkSubmitOptions.startsWith("my options "));
-    assertTrue(sparkSubmitOptions.contains("spark.kubernetes.namespace=" + kubectl.getNamespace()));
+    assertTrue(sparkSubmitOptions.contains("spark.kubernetes.namespace=default"));
     assertTrue(sparkSubmitOptions.contains("spark.kubernetes.driver.pod.name=" + intp.getPodName()));
     assertTrue(sparkSubmitOptions.contains("spark.kubernetes.container.image=spark-container:1.0"));
-    assertTrue(sparkSubmitOptions.contains("spark.driver.host=" + intp.getHost()));
+    assertTrue(sparkSubmitOptions.contains("spark.driver.host=" + intp.getPodName() + ".default.svc"));
     assertTrue(sparkSubmitOptions.contains("spark.driver.port=" + intp.getSparkDriverPort()));
     assertTrue(sparkSubmitOptions.contains("spark.blockManager.port=" + intp.getSparkBlockmanagerPort()));
+    assertFalse(sparkSubmitOptions.contains("--proxy-user"));
+    assertTrue(intp.isSpark());
+  }
+
+  @Test
+  public void testGetTemplateBindingsForSparkWithProxyUser() throws IOException {
+    // given
+    Properties properties = new Properties();
+    properties.put("my.key1", "v1");
+    properties.put("spark.master", "k8s://http://api");
+    HashMap<String, String> envs = new HashMap<String, String>();
+    envs.put("MY_ENV1", "V1");
+    envs.put("SPARK_SUBMIT_OPTIONS", "my options");
+    envs.put("SERVICE_DOMAIN", "mydomain");
+
+    K8sRemoteInterpreterProcess intp = new K8sRemoteInterpreterProcess(
+        server.getClient(),
+        "default",
+        new File(".skip"),
+        "interpreter-container:1.0",
+        "shared_process",
+        "spark",
+        "myspark",
+        properties,
+        envs,
+        "zeppelin.server.service",
+        12320,
+        false,
+        "spark-container:1.0",
+        10,
+        10,
+        true,
+        false);
+
+    // when
+    Properties p = intp.getTemplateBindings("mytestUser");
+    // then
+    assertEquals("spark-container:1.0", p.get("zeppelin.k8s.spark.container.image"));
+    assertEquals(String.format("//4040-%s.%s", intp.getPodName(), "mydomain"), p.get("zeppelin.spark.uiWebUrl"));
+
+    envs = (HashMap<String, String>) p.get("zeppelin.k8s.envs");
+    assertTrue( envs.containsKey("SPARK_HOME"));
+
+    String sparkSubmitOptions = envs.get("SPARK_SUBMIT_OPTIONS");
+    assertTrue(sparkSubmitOptions.startsWith("my options "));
+    assertTrue(sparkSubmitOptions.contains("spark.kubernetes.namespace=default"));
+    assertTrue(sparkSubmitOptions.contains("spark.kubernetes.driver.pod.name=" + intp.getPodName()));
+    assertTrue(sparkSubmitOptions.contains("spark.kubernetes.container.image=spark-container:1.0"));
+    assertTrue(sparkSubmitOptions.contains("spark.driver.host=" + intp.getPodName() + ".default.svc"));
+    assertTrue(sparkSubmitOptions.contains("spark.driver.port=" + intp.getSparkDriverPort()));
+    assertTrue(sparkSubmitOptions.contains("spark.blockManager.port=" + intp.getSparkBlockmanagerPort()));
+    assertTrue(sparkSubmitOptions.contains("--proxy-user mytestUser"));
+    assertTrue(intp.isSpark());
+  }
+
+  @Test
+  public void testGetTemplateBindingsForSparkWithProxyUserAnonymous() throws IOException {
+    // given
+    Properties properties = new Properties();
+    properties.put("my.key1", "v1");
+    properties.put("spark.master", "k8s://http://api");
+    HashMap<String, String> envs = new HashMap<String, String>();
+    envs.put("MY_ENV1", "V1");
+    envs.put("SPARK_SUBMIT_OPTIONS", "my options");
+    envs.put("SERVICE_DOMAIN", "mydomain");
+
+    K8sRemoteInterpreterProcess intp = new K8sRemoteInterpreterProcess(
+        server.getClient(),
+        "default",
+        new File(".skip"),
+        "interpreter-container:1.0",
+        "shared_process",
+        "spark",
+        "myspark",
+        properties,
+        envs,
+        "zeppelin.server.service",
+        12320,
+        false,
+        "spark-container:1.0",
+        10,
+        10,
+        true,
+        false);
+
+    // when
+    Properties p = intp.getTemplateBindings("anonymous");
+    // then
+    assertEquals("spark-container:1.0", p.get("zeppelin.k8s.spark.container.image"));
+    assertEquals(String.format("//4040-%s.%s", intp.getPodName(), "mydomain"), p.get("zeppelin.spark.uiWebUrl"));
+
+    envs = (HashMap<String, String>) p.get("zeppelin.k8s.envs");
+    assertTrue( envs.containsKey("SPARK_HOME"));
+
+    String sparkSubmitOptions = envs.get("SPARK_SUBMIT_OPTIONS");
+    assertFalse(sparkSubmitOptions.contains("--proxy-user"));
+    assertTrue(intp.isSpark());
+  }
+
+  @Test
+  public void testSparkUiWebUrlTemplate() {
+    // given
+    Properties properties = new Properties();
+    HashMap<String, String> envs = new HashMap<String, String>();
+    envs.put("SERVICE_DOMAIN", "mydomain");
+
+    K8sRemoteInterpreterProcess intp = new K8sRemoteInterpreterProcess(
+        server.getClient(),
+        "default",
+        new File(".skip"),
+        "interpreter-container:1.0",
+        "shared_process",
+        "spark",
+        "myspark",
+        properties,
+        envs,
+        "zeppelin.server.service",
+        12320,
+        false,
+        "spark-container:1.0",
+        10,
+        10,
+        false,
+        false);
+
+    // when non template url
+    assertEquals("static.url",
+        intp.sparkUiWebUrlFromTemplate(
+            "static.url",
+            4040,
+            "zeppelin-server",
+            "my.domain.com"));
+
+    // when template url
+    assertEquals("//4040-zeppelin-server.my.domain.com",
+        intp.sparkUiWebUrlFromTemplate(
+            "//{{PORT}}-{{SERVICE_NAME}}.{{SERVICE_DOMAIN}}",
+            4040,
+            "zeppelin-server",
+            "my.domain.com"));
+  }
+
+  @Test
+  public void testSparkPodResources() {
+    // given
+    Properties properties = new Properties();
+    properties.put("spark.driver.memory", "1g");
+    properties.put("spark.driver.cores", "1");
+    HashMap<String, String> envs = new HashMap<String, String>();
+    envs.put("SERVICE_DOMAIN", "mydomain");
+
+    K8sRemoteInterpreterProcess intp = new K8sRemoteInterpreterProcess(
+        server.getClient(),
+        "default",
+        new File(".skip"),
+        "interpreter-container:1.0",
+        "shared_process",
+        "spark",
+        "myspark",
+        properties,
+        envs,
+        "zeppelin.server.service",
+        12320,
+        false,
+        "spark-container:1.0",
+        10,
+        10,
+        false,
+        false);
+
+    // when
+    Properties p = intp.getTemplateBindings(null);
+
+    // then
+    assertEquals("1", p.get("zeppelin.k8s.interpreter.cores"));
+    assertEquals("1408Mi", p.get("zeppelin.k8s.interpreter.memory"));
+  }
+
+  @Test
+  public void testSparkPodResourcesMemoryOverhead() {
+    // given
+    Properties properties = new Properties();
+    properties.put("spark.driver.memory", "1g");
+    properties.put("spark.driver.memoryOverhead", "256m");
+    properties.put("spark.driver.cores", "5");
+    HashMap<String, String> envs = new HashMap<String, String>();
+    envs.put("SERVICE_DOMAIN", "mydomain");
+
+    K8sRemoteInterpreterProcess intp = new K8sRemoteInterpreterProcess(
+        server.getClient(),
+        "default",
+        new File(".skip"),
+        "interpreter-container:1.0",
+        "shared_process",
+        "spark",
+        "myspark",
+        properties,
+        envs,
+        "zeppelin.server.service",
+        12320,
+        false,
+        "spark-container:1.0",
+        10,
+        10,
+        false,
+        false);
+
+    // when
+    Properties p = intp.getTemplateBindings(null);
+
+    // then
+    assertEquals("5", p.get("zeppelin.k8s.interpreter.cores"));
+    assertEquals("1280Mi", p.get("zeppelin.k8s.interpreter.memory"));
+  }
+
+  @Test
+  public void testK8sStartSuccessful() throws IOException, InterruptedException {
+    // given
+    Properties properties = new Properties();
+    HashMap<String, String> envs = new HashMap<String, String>();
+    envs.put("SERVICE_DOMAIN", "mydomain");
+    URL url = Thread.currentThread().getContextClassLoader()
+        .getResource("k8s-specs/interpreter-spec.yaml");
+    File file = new File(url.getPath());
+
+    K8sRemoteInterpreterProcess intp = new K8sRemoteInterpreterProcess(
+        server.getClient(),
+        "default",
+        file,
+        "interpreter-container:1.0",
+        "shared_process",
+        "spark",
+        "myspark",
+        properties,
+        envs,
+        "zeppelin.server.service",
+        12320,
+        false,
+        "spark-container:1.0",
+        10000,
+        10,
+        false,
+        true);
+    ExecutorService service = Executors.newFixedThreadPool(1);
+    service
+        .submit(new PodStatusSimulator(server.getClient(), intp.getNamespace(), intp.getPodName(), intp));
+    intp.start("TestUser");
+    // then
+    assertEquals("Running", intp.getPodPhase());
+  }
+
+  @Test
+  public void testK8sStartFailed() throws IOException, InterruptedException {
+    // given
+    Properties properties = new Properties();
+    HashMap<String, String> envs = new HashMap<String, String>();
+    envs.put("SERVICE_DOMAIN", "mydomain");
+    URL url = Thread.currentThread().getContextClassLoader()
+        .getResource("k8s-specs/interpreter-spec.yaml");
+    File file = new File(url.getPath());
+
+    K8sRemoteInterpreterProcess intp = new K8sRemoteInterpreterProcess(
+        server.getClient(),
+        "default",
+        file,
+        "interpreter-container:1.0",
+        "shared_process",
+        "spark",
+        "myspark",
+        properties,
+        envs,
+        "zeppelin.server.service",
+        12320,
+        false,
+        "spark-container:1.0",
+        3000,
+        10,
+        false,
+        true);
+    PodStatusSimulator podStatusSimulator = new PodStatusSimulator(server.getClient(), intp.getNamespace(), intp.getPodName(), intp);
+    podStatusSimulator.setSecondPhase("Failed");
+    podStatusSimulator.setSuccessfullStart(false);
+    ExecutorService service = Executors.newFixedThreadPool(1);
+    service
+        .submit(podStatusSimulator);
+    // should throw an IOException
+    try {
+      intp.start("TestUser");
+      fail("We excepting an IOException");
+    } catch (IOException e) {
+      assertNotNull(e);
+      // Check that the Pod is deleted
+      assertNull(
+          server.getClient().pods().inNamespace(intp.getNamespace()).withName(intp.getPodName())
+              .get());
+    }
+  }
+
+  @Test
+  public void testK8sStartTimeoutPending() throws IOException, InterruptedException {
+    // given
+    Properties properties = new Properties();
+    HashMap<String, String> envs = new HashMap<String, String>();
+    envs.put("SERVICE_DOMAIN", "mydomain");
+    URL url = Thread.currentThread().getContextClassLoader()
+        .getResource("k8s-specs/interpreter-spec.yaml");
+    File file = new File(url.getPath());
+
+    K8sRemoteInterpreterProcess intp = new K8sRemoteInterpreterProcess(
+        server.getClient(),
+        "default",
+        file,
+        "interpreter-container:1.0",
+        "shared_process",
+        "spark",
+        "myspark",
+        properties,
+        envs,
+        "zeppelin.server.service",
+        12320,
+        false,
+        "spark-container:1.0",
+        3000,
+        10,
+        false,
+        false);
+    PodStatusSimulator podStatusSimulator = new PodStatusSimulator(server.getClient(), intp.getNamespace(), intp.getPodName(), intp);
+    podStatusSimulator.setFirstPhase("Pending");
+    podStatusSimulator.setSecondPhase("Pending");
+    podStatusSimulator.setSuccessfullStart(false);
+    ExecutorService service = Executors.newFixedThreadPool(2);
+    service
+        .submit(podStatusSimulator);
+    service.submit(() -> {
+      try {
+        intp.start("TestUser");
+        fail("We interrupt, this line of code should not be executed.");
+      } catch (IOException e) {
+        fail("We interrupt, this line of code should not be executed.");
+      }
+    });
+    // wait a little bit
+    TimeUnit.SECONDS.sleep(5);
+    service.shutdownNow();
+    // wait for a shutdown
+    service.awaitTermination(10, TimeUnit.SECONDS);
+    // Check that the Pod is deleted
+    assertNull(server.getClient().pods().inNamespace(intp.getNamespace())
+        .withName(intp.getPodName()).get());
+
+  }
+
+  class PodStatusSimulator implements Runnable {
+
+    private final KubernetesClient client;
+    private final String namespace;
+    private final String podName;
+    private final RemoteInterpreterManagedProcess process;
+
+    private String firstPhase = "Pending";
+    private String secondPhase = "Running";
+    private boolean successfulStart = true;
+
+    public PodStatusSimulator(
+        KubernetesClient client,
+        String namespace,
+        String podName,
+        RemoteInterpreterManagedProcess process) {
+      this.client = client;
+      this.namespace = namespace;
+      this.podName = podName;
+      this.process = process;
+    }
+
+    public void setFirstPhase(String phase) {
+      this.firstPhase = phase;
+    }
+    public void setSecondPhase(String phase) {
+      this.secondPhase = phase;
+    }
+    public void setSuccessfullStart(boolean successful) {
+      this.successfulStart = successful;
+    }
+
+    @Override
+    public void run() {
+      try {
+        Instant timeoutTime = Instant.now().plusSeconds(10);
+        while (timeoutTime.isAfter(Instant.now())) {
+          Pod pod = client.pods().inNamespace(namespace).withName(podName).get();
+          if (pod != null) {
+            TimeUnit.SECONDS.sleep(1);
+            // Update Pod to "pending" phase
+            pod.setStatus(new PodStatus(null, null, null, null, null, null, null, firstPhase,
+                null,
+                null, null, null, null));
+            client.pods().inNamespace(namespace).updateStatus(pod);
+            // Update Pod to "Running" phase
+            pod.setStatus(new PodStatus(null, null, null, null, null, null, null, secondPhase,
+                null,
+                null, null, null, null));
+            client.pods().inNamespace(namespace).updateStatus(pod);
+            TimeUnit.SECONDS.sleep(1);
+            if (successfulStart) {
+              process.processStarted(12320, "testing");
+            }
+            break;
+          } else {
+            TimeUnit.MILLISECONDS.sleep(100);
+          }
+        }
+      } catch (InterruptedException e) {
+      }
+    }
   }
 }

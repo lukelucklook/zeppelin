@@ -18,12 +18,14 @@
 package org.apache.zeppelin.storage;
 
 import org.apache.commons.io.IOUtils;
+import org.apache.zeppelin.util.FileUtils;
 import org.junit.Test;
 
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -39,9 +41,9 @@ public class LocalConfigStorageTest {
         final Path destination = Files.createTempFile("test-", "file");
         final File destinationFile = destination.toFile();
         try {
-            LocalConfigStorage.atomicWriteToFile(TEST_STRING, destinationFile);
+            FileUtils.atomicWriteToFile(TEST_STRING, destinationFile);
             try (InputStream is = Files.newInputStream(destination)) {
-                String read = IOUtils.toString(is);
+                String read = IOUtils.toString(is, StandardCharsets.UTF_8);
                 assertEquals(TEST_STRING, read);
             }
         } finally {
@@ -56,9 +58,9 @@ public class LocalConfigStorageTest {
         final Path destination = Paths.get(destDir.toString(),"test-" + rnd.nextLong() + "-file");
         final File destinationFile = destination.toFile();
         try {
-            LocalConfigStorage.atomicWriteToFile(TEST_STRING, destinationFile);
+            FileUtils.atomicWriteToFile(TEST_STRING, destinationFile);
             try (InputStream is = Files.newInputStream(destination)) {
-                String read = IOUtils.toString(is);
+                String read = IOUtils.toString(is, StandardCharsets.UTF_8);
                 assertEquals(TEST_STRING, read);
             }
         } finally {
@@ -76,7 +78,7 @@ public class LocalConfigStorageTest {
             try (BufferedWriter writer = Files.newBufferedWriter(destination)) {
                 writer.write(TEST_STRING);
             }
-            String read = LocalConfigStorage.readFromFile(destinationFile);
+            String read = FileUtils.readFromFile(destinationFile);
             assertEquals(TEST_STRING, read);
         } finally {
             Files.deleteIfExists(destination);

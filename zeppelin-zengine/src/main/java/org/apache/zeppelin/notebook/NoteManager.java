@@ -19,18 +19,22 @@
 package org.apache.zeppelin.notebook;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.zeppelin.conf.ZeppelinConfiguration;
 import org.apache.zeppelin.notebook.repo.NotebookRepo;
-import org.apache.zeppelin.scheduler.Job;
 import org.apache.zeppelin.user.AuthenticationInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.inject.Inject;
+import javax.inject.Singleton;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Manager class for note. It handle all the note related operations, such as get, create,
@@ -46,9 +50,10 @@ import java.util.stream.Collectors;
  * TODO(zjffdu) implement the lifecycle manager of Note
  * (release memory if note is not used for some period)
  */
+@Singleton
 public class NoteManager {
   private static final Logger LOGGER = LoggerFactory.getLogger(NoteManager.class);
-  public static String TRASH_FOLDER = "~Trash";
+  public static final String TRASH_FOLDER = "~Trash";
   private Folder root;
   private Folder trash;
 
@@ -56,6 +61,7 @@ public class NoteManager {
   // noteId -> notePath
   private Map<String, String> notesInfo;
 
+  @Inject
   public NoteManager(NotebookRepo notebookRepo) throws IOException {
     this.notebookRepo = notebookRepo;
     this.root = new Folder("/", notebookRepo);
@@ -66,7 +72,7 @@ public class NoteManager {
   // build the tree structure of notes
   private void init() throws IOException {
     this.notesInfo = notebookRepo.list(AuthenticationInfo.ANONYMOUS).values().stream()
-        .collect(Collectors.toMap(noteInfo -> noteInfo.getId(), notesInfo -> notesInfo.getPath()));
+        .collect(Collectors.toMap(NoteInfo::getId, NoteInfo::getPath));
     this.notesInfo.entrySet().stream()
         .forEach(entry ->
         {
@@ -82,17 +88,22 @@ public class NoteManager {
     return notesInfo;
   }
 
-  //TODO(zjffdu) This is inefficient
-  public List<Note> getAllNotes() {
-    List<Note> notes = new ArrayList<>();
-    for (String notePath : notesInfo.values()) {
-      try {
-        notes.add(getNoteNode(notePath).getNote());
-      } catch (Exception e) {
-        LOGGER.warn("Fail to load note: " + notePath, e);
-      }
-    }
-    return notes;
+  /**
+   * Return java stream instead of List to save memory, otherwise OOM will happen
+   * when there's large amount of notes.
+   * @return
+   */
+  public Stream<Note> getNotesStream() {
+    return notesInfo.values().stream()
+            .map(notePath -> {
+              try {
+                return getNoteNode(notePath).getNote();
+              } catch (Exception e) {
+                LOGGER.warn("Fail to load note: {}", notePath, e);
+                return null;
+              }
+            })
+            .filter(Objects::nonNull);
   }
 
   /**
@@ -157,20 +168,28 @@ public class NoteManager {
 
   /**
    * Save note to NoteManager, it won't check duplicates, this is used when updating note.
+   * Only save note in 2 cases:
+   *  1. Note is new created, isSaved is false
+   *  2. Note is in loaded state. Unload state means its content is empty.
    *
    * @param note
    * @param subject
    * @throws IOException
    */
   public void saveNote(Note note, AuthenticationInfo subject) throws IOException {
-    addOrUpdateNoteNode(note);
-    this.notebookRepo.save(note, subject);
-    note.setLoaded(true);
+    if (note.isRemoved()) {
+      LOGGER.warn("Try to save note: {} when it is removed", note.getId());
+    } else if (note.isLoaded() || !note.isSaved()) {
+      addOrUpdateNoteNode(note);
+      this.notebookRepo.save(note, subject);
+      note.setSaved(true);
+    } else {
+      LOGGER.warn("Try to save note: {} when it is unloaded", note.getId());
+    }
   }
 
   public void addNote(Note note, AuthenticationInfo subject) throws IOException {
     addOrUpdateNoteNode(note, true);
-    this.notebookRepo.save(note, subject);
     note.setLoaded(true);
   }
 
@@ -221,7 +240,6 @@ public class NoteManager {
     this.notebookRepo.move(noteId, notePath, newNotePath, subject);
   }
 
-
   public void moveFolder(String folderPath,
                          String newFolderPath,
                          AuthenticationInfo subject) throws IOException {
@@ -264,6 +282,22 @@ public class NoteManager {
     }
 
     return notes;
+  }
+
+  /**
+   * Get note from NotebookRepo.
+   *
+   * @param noteId
+   * @return return null if not found on NotebookRepo.
+   * @throws IOException
+   */
+  public Note getNote(String noteId, boolean reload) throws IOException {
+    String notePath = this.notesInfo.get(noteId);
+    if (notePath == null) {
+      return null;
+    }
+    NoteNode noteNode = getNoteNode(notePath);
+    return noteNode.getNote(reload);
   }
 
   /**
@@ -335,12 +369,12 @@ public class NoteManager {
   }
 
   private String getFolderName(String notePath) {
-    int pos = notePath.lastIndexOf("/");
+    int pos = notePath.lastIndexOf('/');
     return notePath.substring(0, pos);
   }
 
   private String getNoteName(String notePath) {
-    int pos = notePath.lastIndexOf("/");
+    int pos = notePath.lastIndexOf('/');
     return notePath.substring(pos + 1);
   }
 
@@ -458,12 +492,12 @@ public class NoteManager {
     }
 
     public List<NoteNode> getNoteNodeRecursively() {
-      List<NoteNode> notes = new ArrayList<>();
-      notes.addAll(this.notes.values());
+      List<NoteNode> noteNodeRecursively = new ArrayList<>();
+      noteNodeRecursively.addAll(this.notes.values());
       for (Folder folder : subFolders.values()) {
-        notes.addAll(folder.getNoteNodeRecursively());
+        noteNodeRecursively.addAll(folder.getNoteNodeRecursively());
       }
-      return notes;
+      return noteNodeRecursively;
     }
 
     public Map<String, NoteNode> getNotes() {
@@ -509,20 +543,25 @@ public class NoteManager {
       this.notebookRepo = notebookRepo;
     }
 
+    public synchronized Note getNote() throws IOException {
+        return getNote(false);
+    }
+
     /**
      * This method will load note from NotebookRepo. If you just want to get noteId, noteName or
      * notePath, you can call method getNoteId, getNoteName & getNotePath
      * @return
      * @throws IOException
      */
-    public synchronized Note getNote() throws IOException {
-      if (!note.isLoaded()) {
+    public synchronized Note getNote(boolean reload) throws IOException {
+      if (!note.isLoaded() || reload) {
         note = notebookRepo.get(note.getId(), note.getPath(), AuthenticationInfo.ANONYMOUS);
         if (parent.toString().equals("/")) {
           note.setPath("/" + note.getName());
         } else {
           note.setPath(parent.toString() + "/" + note.getName());
         }
+        note.setCronSupported(ZeppelinConfiguration.create());
         note.setLoaded(true);
       }
       return note;

@@ -55,10 +55,9 @@ public class IPySparkInterpreterTest extends IPythonInterpreterTest {
   @Override
   protected Properties initIntpProperties() {
     Properties p = new Properties();
-    p.setProperty("spark.master", "local[4]");
-    p.setProperty("master", "local[4]");
+    p.setProperty(SparkStringConstants.MASTER_PROP_NAME, "local[4]");
     p.setProperty("spark.submit.deployMode", "client");
-    p.setProperty("spark.app.name", "Zeppelin Test");
+    p.setProperty(SparkStringConstants.APP_NAME_PROP_NAME, "Zeppelin Test");
     p.setProperty("zeppelin.spark.useHiveContext", "false");
     p.setProperty("zeppelin.spark.maxResult", "3");
     p.setProperty("zeppelin.spark.importImplicit", "true");
@@ -168,6 +167,10 @@ public class IPySparkInterpreterTest extends IPythonInterpreterTest {
           "_1	_2\n" +
               "1	a\n" +
               "2	b", interpreterResultMessages.get(0).getData().trim());
+
+      // spark sql python API bindings
+      result = interpreter.interpret("df.explain()", context);
+      assertEquals(InterpreterResult.Code.SUCCESS, result.code());
     }
     // cancel
     if (interpreter instanceof IPySparkInterpreter) {
@@ -217,6 +220,14 @@ public class IPySparkInterpreterTest extends IPythonInterpreterTest {
     assertTrue(completions.size() > 0);
     completions.contains(new InterpreterCompletion("sc", "sc", ""));
 
+    // python call java via py4j
+    context = createInterpreterContext(mockIntpEventClient);
+    result = interpreter.interpret("sc._jvm.java.lang.System.out.println(\"hello world\")", context);
+    assertEquals(InterpreterResult.Code.SUCCESS, result.code());
+    interpreterResultMessages = context.out.toInterpreterResultMessage();
+    assertEquals(1, interpreterResultMessages.size());
+    assertEquals("hello world\n", interpreterResultMessages.get(0).getData());
+
     // pyspark streaming TODO(zjffdu) disable pyspark streaming test temporary
     context = createInterpreterContext(mockIntpEventClient);
     //    result = interpreter.interpret(
@@ -265,7 +276,7 @@ public class IPySparkInterpreterTest extends IPythonInterpreterTest {
         .setNoteId("noteId")
         .setParagraphId("paragraphId")
         .setIntpEventClient(mockRemoteEventClient)
-        .setInterpreterOut(new InterpreterOutput(null))
+        .setInterpreterOut(new InterpreterOutput())
         .build();
   }
 }

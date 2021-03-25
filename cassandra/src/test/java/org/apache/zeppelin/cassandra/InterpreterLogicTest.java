@@ -16,6 +16,12 @@
  */
 package org.apache.zeppelin.cassandra;
 
+import static com.datastax.oss.driver.api.core.ConsistencyLevel.ALL;
+import static com.datastax.oss.driver.api.core.ConsistencyLevel.LOCAL_SERIAL;
+import static com.datastax.oss.driver.api.core.ConsistencyLevel.ONE;
+import static com.datastax.oss.driver.api.core.ConsistencyLevel.QUORUM;
+import static com.datastax.oss.driver.api.core.ConsistencyLevel.SERIAL;
+import static com.datastax.oss.driver.api.core.cql.BatchType.UNLOGGED;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
@@ -26,12 +32,10 @@ import static org.mockito.Mockito.when;
 
 import static java.util.Arrays.asList;
 
-import static com.datastax.driver.core.BatchStatement.Type.UNLOGGED;
-import static com.datastax.driver.core.ConsistencyLevel.ALL;
-import static com.datastax.driver.core.ConsistencyLevel.LOCAL_SERIAL;
-import static com.datastax.driver.core.ConsistencyLevel.ONE;
-import static com.datastax.driver.core.ConsistencyLevel.QUORUM;
-import static com.datastax.driver.core.ConsistencyLevel.SERIAL;
+import com.datastax.oss.driver.api.core.CqlSession;
+import com.datastax.oss.driver.api.core.cql.BatchStatement;
+import com.datastax.oss.driver.api.core.cql.BatchableStatement;
+import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -43,27 +47,22 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.runners.MockitoJUnitRunner;
 
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.temporal.ChronoField;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Calendar;
-import java.util.Date;
+import java.util.Collections;
 import java.util.List;
-
-import com.datastax.driver.core.BatchStatement;
-import com.datastax.driver.core.ConsistencyLevel;
-import com.datastax.driver.core.Session;
-import com.datastax.driver.core.SimpleStatement;
-import com.datastax.driver.core.Statement;
+import java.util.Properties;
 
 import scala.Option;
 
 import org.apache.zeppelin.cassandra.TextBlockHierarchy.AnyBlock;
 import org.apache.zeppelin.cassandra.TextBlockHierarchy.Consistency;
-import org.apache.zeppelin.cassandra.TextBlockHierarchy.DowngradingRetryPolicy$;
-import org.apache.zeppelin.cassandra.TextBlockHierarchy.LoggingDefaultRetryPolicy$;
 import org.apache.zeppelin.cassandra.TextBlockHierarchy.QueryParameters;
 import org.apache.zeppelin.cassandra.TextBlockHierarchy.RequestTimeOut;
-import org.apache.zeppelin.cassandra.TextBlockHierarchy.RetryPolicy;
 import org.apache.zeppelin.cassandra.TextBlockHierarchy.SerialConsistency;
 import org.apache.zeppelin.cassandra.TextBlockHierarchy.SimpleStm;
 import org.apache.zeppelin.cassandra.TextBlockHierarchy.Timestamp;
@@ -82,20 +81,20 @@ public class InterpreterLogicTest {
   private InterpreterContext intrContext;
 
   @Mock
-  private Session session;
+  private CqlSession session;
 
-  final InterpreterLogic helper = new InterpreterLogic(session);
+  final InterpreterLogic helper = new InterpreterLogic(session, new Properties());
 
   @Captor
   ArgumentCaptor<ParamOption[]> optionsCaptor;
 
   @Test
-  public void should_parse_input_string_block() throws Exception {
+  public void should_parse_input_string_block() {
     //Given
     String input = "SELECT * FROM users LIMIT 10;";
 
     //When
-    final List<AnyBlock> anyBlocks = this.<AnyBlock>toJavaList(helper.parseInput(input));
+    final List<AnyBlock> anyBlocks = this.toJavaList(helper.parseInput(input));
 
     //Then
     assertThat(anyBlocks).hasSize(1);
@@ -103,12 +102,12 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_parse_input_string_block_with_comment_dash() throws Exception {
+  public void should_parse_input_string_block_with_comment_dash() {
     //Given
     String input = "SELECT * FROM users LIMIT 10; -- this is a comment";
 
     //When
-    final List<AnyBlock> anyBlocks = this.<AnyBlock>toJavaList(helper.parseInput(input));
+    final List<AnyBlock> anyBlocks = this.toJavaList(helper.parseInput(input));
 
     //Then
     assertThat(anyBlocks).hasSize(2);
@@ -117,12 +116,12 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_parse_input_string_block_with_comment_slash() throws Exception {
+  public void should_parse_input_string_block_with_comment_slash() {
     //Given
     String input = "SELECT * FROM users LIMIT 10; // this is a comment";
 
     //When
-    final List<AnyBlock> anyBlocks = this.<AnyBlock>toJavaList(helper.parseInput(input));
+    final List<AnyBlock> anyBlocks = this.toJavaList(helper.parseInput(input));
 
     //Then
     assertThat(anyBlocks).hasSize(2);
@@ -131,7 +130,7 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_exception_while_parsing_input() throws Exception {
+  public void should_exception_while_parsing_input() {
     //Given
     String input = "SELECT * FROM users LIMIT 10";
 
@@ -145,7 +144,7 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_extract_variable_and_default_value() throws Exception {
+  public void should_extract_variable_and_default_value() {
     //Given
     AngularObjectRegistry angularObjectRegistry = new AngularObjectRegistry("cassandra", null);
     when(intrContext.getAngularObjectRegistry()).thenReturn(angularObjectRegistry);
@@ -161,7 +160,7 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_extract_variable_and_choices() throws Exception {
+  public void should_extract_variable_and_choices() {
     //Given
     AngularObjectRegistry angularObjectRegistry = new AngularObjectRegistry("cassandra", null);
     when(intrContext.getAngularObjectRegistry()).thenReturn(angularObjectRegistry);
@@ -182,7 +181,7 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_extract_no_variable() throws Exception {
+  public void should_extract_no_variable() {
     //Given
     GUI gui = mock(GUI.class);
     when(intrContext.getGui()).thenReturn(gui);
@@ -196,7 +195,7 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_extract_variable_from_angular_object_registry() throws Exception {
+  public void should_extract_variable_from_angular_object_registry() {
     //Given
     AngularObjectRegistry angularObjectRegistry = new AngularObjectRegistry("cassandra", null);
     angularObjectRegistry.add("id", "from_angular_registry", "noteId", "paragraphId");
@@ -214,7 +213,7 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_error_if_incorrect_variable_definition() throws Exception {
+  public void should_error_if_incorrect_variable_definition() {
     //Given
 
     //When
@@ -229,9 +228,9 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_extract_consistency_option() throws Exception {
+  public void should_extract_consistency_option() {
     //Given
-    List<QueryParameters> options = Arrays.<QueryParameters>asList(new Consistency(ALL),
+    List<QueryParameters> options = Arrays.asList(new Consistency(ALL),
             new Consistency(ONE));
 
     //When
@@ -242,9 +241,9 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_extract_serial_consistency_option() throws Exception {
+  public void should_extract_serial_consistency_option() {
     //Given
-    List<QueryParameters> options = Arrays.<QueryParameters>asList(new SerialConsistency(SERIAL),
+    List<QueryParameters> options = Arrays.asList(new SerialConsistency(SERIAL),
             new SerialConsistency(LOCAL_SERIAL));
 
     //When
@@ -255,9 +254,9 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_extract_timestamp_option() throws Exception {
+  public void should_extract_timestamp_option() {
     //Given
-    List<QueryParameters> options = Arrays.<QueryParameters>asList(new Timestamp(123L),
+    List<QueryParameters> options = Arrays.asList(new Timestamp(123L),
             new Timestamp(456L));
 
     //When
@@ -268,22 +267,9 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_extract_retry_policy_option() throws Exception {
+  public void should_extract_request_timeout_option() {
     //Given
-    List<QueryParameters> options = Arrays.<QueryParameters>asList(DowngradingRetryPolicy$.MODULE$,
-            LoggingDefaultRetryPolicy$.MODULE$);
-
-    //When
-    final CassandraQueryOptions actual = helper.extractQueryOptions(toScalaList(options));
-
-    //Then
-    assertThat(actual.retryPolicy().get()).isSameAs(DowngradingRetryPolicy$.MODULE$);
-  }
-
-  @Test
-  public void should_extract_request_timeout_option() throws Exception {
-    //Given
-    List<QueryParameters> options = Arrays.<QueryParameters>asList(new RequestTimeOut(100));
+    List<QueryParameters> options = Collections.singletonList(new RequestTimeOut(100));
 
     //When
     final CassandraQueryOptions actual = helper.extractQueryOptions(toScalaList(options));
@@ -293,13 +279,12 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_generate_simple_statement() throws Exception {
+  public void should_generate_simple_statement() {
     //Given
     String input = "SELECT * FROM users LIMIT 10;";
     CassandraQueryOptions options = new CassandraQueryOptions(Option.apply(QUORUM),
-            Option.<ConsistencyLevel>empty(),
             Option.empty(),
-            Option.<RetryPolicy>empty(),
+            Option.empty(),
             Option.empty(),
             Option.empty());
 
@@ -309,20 +294,20 @@ public class InterpreterLogicTest {
 
     //Then
     assertThat(actual).isNotNull();
-    assertThat(actual.getQueryString()).isEqualTo("SELECT * FROM users LIMIT 10;");
+    assertThat(actual.getQuery()).isEqualTo("SELECT * FROM users LIMIT 10;");
     assertThat(actual.getConsistencyLevel()).isSameAs(QUORUM);
   }
 
   @Test
-  public void should_generate_batch_statement() throws Exception {
+  public void should_generate_batch_statement() {
     //Given
-    Statement st1 = new SimpleStatement("SELECT * FROM users LIMIT 10;");
-    Statement st2 = new SimpleStatement("INSERT INTO users(id) VALUES(10);");
-    Statement st3 = new SimpleStatement("UPDATE users SET name = 'John DOE' WHERE id=10;");
+    SimpleStatement st1 = SimpleStatement.newInstance("SELECT * FROM users LIMIT 10;");
+    SimpleStatement st2 = SimpleStatement.newInstance("INSERT INTO users(id) VALUES(10);");
+    SimpleStatement st3 = SimpleStatement.newInstance(
+            "UPDATE users SET name = 'John DOE' WHERE id=10;");
     CassandraQueryOptions options = new CassandraQueryOptions(Option.apply(QUORUM),
-            Option.<ConsistencyLevel>empty(),
             Option.empty(),
-            Option.<RetryPolicy>empty(),
+            Option.empty(),
             Option.empty(),
             Option.empty());
 
@@ -332,7 +317,10 @@ public class InterpreterLogicTest {
 
     //Then
     assertThat(actual).isNotNull();
-    final List<Statement> statements = new ArrayList<>(actual.getStatements());
+    List<BatchableStatement> statements = new ArrayList<>();
+    for (BatchableStatement b: actual) {
+      statements.add(b);
+    }
     assertThat(statements).hasSize(3);
     assertThat(statements.get(0)).isSameAs(st1);
     assertThat(statements.get(1)).isSameAs(st2);
@@ -341,12 +329,12 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_parse_bound_values() throws Exception {
+  public void should_parse_bound_values() {
     //Given
     String bs = "'jdoe',32,'John DOE',null, true, '2014-06-12 34:00:34'";
 
     //When
-    final List<String> actual = this.<String>toJavaList(helper.parseBoundValues("ps", bs));
+    final List<String> actual = this.toJavaList(helper.parseBoundValues("ps", bs));
 
     //Then
     assertThat(actual).containsExactly("'jdoe'", "32", "'John DOE'",
@@ -354,44 +342,42 @@ public class InterpreterLogicTest {
   }
 
   @Test
-  public void should_parse_simple_date() throws Exception {
+  public void should_parse_simple_date() {
     //Given
     String dateString = "2015-07-30 12:00:01";
 
     //When
-    final Date actual = helper.parseDate(dateString);
+    final Instant actual = helper.parseDate(dateString);
 
     //Then
-    Calendar calendar = Calendar.getInstance();
-    calendar.setTime(actual);
+    ZonedDateTime dt = actual.atZone(ZoneOffset.UTC);
 
-    assertThat(calendar.get(Calendar.YEAR)).isEqualTo(2015);
-    assertThat(calendar.get(Calendar.MONTH)).isEqualTo(Calendar.JULY);
-    assertThat(calendar.get(Calendar.DAY_OF_MONTH)).isEqualTo(30);
-    assertThat(calendar.get(Calendar.HOUR_OF_DAY)).isEqualTo(12);
-    assertThat(calendar.get(Calendar.MINUTE)).isEqualTo(0);
-    assertThat(calendar.get(Calendar.SECOND)).isEqualTo(1);
+    assertThat(dt.getLong(ChronoField.YEAR_OF_ERA)).isEqualTo(2015);
+    assertThat(dt.getLong(ChronoField.MONTH_OF_YEAR)).isEqualTo(7);
+    assertThat(dt.getLong(ChronoField.DAY_OF_MONTH)).isEqualTo(30);
+    assertThat(dt.getLong(ChronoField.HOUR_OF_DAY)).isEqualTo(12);
+    assertThat(dt.getLong(ChronoField.MINUTE_OF_HOUR)).isEqualTo(0);
+    assertThat(dt.getLong(ChronoField.SECOND_OF_MINUTE)).isEqualTo(1);
   }
 
   @Test
-  public void should_parse_accurate_date() throws Exception {
+  public void should_parse_accurate_date() {
     //Given
     String dateString = "2015-07-30 12:00:01.123";
 
     //When
-    final Date actual = helper.parseDate(dateString);
+    final Instant actual = helper.parseDate(dateString);
 
     //Then
-    Calendar calendar = Calendar.getInstance();
-    calendar.setTime(actual);
+    ZonedDateTime dt = actual.atZone(ZoneOffset.UTC);
 
-    assertThat(calendar.get(Calendar.YEAR)).isEqualTo(2015);
-    assertThat(calendar.get(Calendar.MONTH)).isEqualTo(Calendar.JULY);
-    assertThat(calendar.get(Calendar.DAY_OF_MONTH)).isEqualTo(30);
-    assertThat(calendar.get(Calendar.HOUR_OF_DAY)).isEqualTo(12);
-    assertThat(calendar.get(Calendar.MINUTE)).isEqualTo(0);
-    assertThat(calendar.get(Calendar.SECOND)).isEqualTo(1);
-    assertThat(calendar.get(Calendar.MILLISECOND)).isEqualTo(123);
+    assertThat(dt.getLong(ChronoField.YEAR_OF_ERA)).isEqualTo(2015);
+    assertThat(dt.getLong(ChronoField.MONTH_OF_YEAR)).isEqualTo(7);
+    assertThat(dt.getLong(ChronoField.DAY_OF_MONTH)).isEqualTo(30);
+    assertThat(dt.getLong(ChronoField.HOUR_OF_DAY)).isEqualTo(12);
+    assertThat(dt.getLong(ChronoField.MINUTE_OF_HOUR)).isEqualTo(0);
+    assertThat(dt.getLong(ChronoField.SECOND_OF_MINUTE)).isEqualTo(1);
+    assertThat(dt.getLong(ChronoField.MILLI_OF_SECOND)).isEqualTo(123);
   }
 
   private <A> scala.collection.immutable.List<A> toScalaList(java.util.List<A> list)  {

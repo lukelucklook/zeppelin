@@ -18,16 +18,21 @@
 package org.apache.zeppelin.spark
 
 
-import java.io.File
-import java.net.URLClassLoader
+import java.io.{File, IOException}
+import java.net.{URL, URLClassLoader}
 import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.commons.lang3.StringUtils
+import org.apache.hadoop.yarn.client.api.YarnClient
+import org.apache.hadoop.yarn.conf.YarnConfiguration
+import org.apache.hadoop.yarn.util.ConverterUtils
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.sql.SQLContext
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.zeppelin.interpreter.util.InterpreterOutputStream
-import org.apache.zeppelin.interpreter.{BaseZeppelinContext, InterpreterContext, InterpreterGroup, InterpreterResult}
+import org.apache.zeppelin.interpreter.{InterpreterContext, InterpreterGroup, InterpreterResult, ZeppelinContext}
 import org.slf4j.{Logger, LoggerFactory}
 
 import scala.collection.JavaConverters._
@@ -58,6 +63,10 @@ abstract class BaseSparkScalaInterpreter(val conf: SparkConf,
 
   protected var sparkSession: Object = _
 
+  protected var outputDir: File = _
+
+  protected var userJars: Seq[String] = _
+
   protected var sparkHttpServer: Object = _
 
   protected var sparkUrl: String = _
@@ -68,6 +77,8 @@ abstract class BaseSparkScalaInterpreter(val conf: SparkConf,
 
   protected val interpreterOutput: InterpreterOutputStream
 
+  protected val sparkMaster: String = conf.get(SparkStringConstants.MASTER_PROP_NAME,
+    SparkStringConstants.DEFAULT_MASTER_VALUE)
 
   protected def open(): Unit = {
     /* Required for scoped mode.
@@ -94,11 +105,16 @@ abstract class BaseSparkScalaInterpreter(val conf: SparkConf,
   def interpret(code: String, context: InterpreterContext): InterpreterResult = {
 
     val originalOut = System.out
+    val printREPLOutput = context.getStringLocalProperty("printREPLOutput", "true").toBoolean
 
     def _interpret(code: String): scala.tools.nsc.interpreter.Results.Result = {
       Console.withOut(interpreterOutput) {
         System.setOut(Console.out)
-        interpreterOutput.setInterpreterOutput(context.out)
+        if (printREPLOutput) {
+          interpreterOutput.setInterpreterOutput(context.out)
+        } else {
+          interpreterOutput.setInterpreterOutput(null)
+        }
         interpreterOutput.ignoreLeadingNewLinesFromScalaReporter()
 
         val status = scalaInterpret(code) match {
@@ -159,7 +175,7 @@ abstract class BaseSparkScalaInterpreter(val conf: SparkConf,
 
   override def getSparkUrl: String = sparkUrl
 
-  override def getZeppelinContext: BaseZeppelinContext = z
+  override def getZeppelinContext: ZeppelinContext = z
 
   protected def bind(name: String, tpe: String, value: Object, modifier: List[String]): Unit
 
@@ -171,6 +187,18 @@ abstract class BaseSparkScalaInterpreter(val conf: SparkConf,
     bind(name, tpe, value, modifier.asScala.toList)
 
   protected def close(): Unit = {
+    // delete stagingDir for yarn mode
+    if (sparkMaster.startsWith("yarn")) {
+      val hadoopConf = new YarnConfiguration()
+      val appStagingBaseDir = if (conf.contains("spark.yarn.stagingDir")) {
+        new Path(conf.get("spark.yarn.stagingDir"))
+      } else {
+        FileSystem.get(hadoopConf).getHomeDirectory()
+      }
+      val stagingDirPath = new Path(appStagingBaseDir, ".sparkStaging" + "/" + sc.applicationId)
+      cleanupStagingDirInternal(stagingDirPath, hadoopConf)
+    }
+
     if (sparkHttpServer != null) {
       sparkHttpServer.getClass.getMethod("stop").invoke(sparkHttpServer)
     }
@@ -183,6 +211,18 @@ abstract class BaseSparkScalaInterpreter(val conf: SparkConf,
       sparkSession = null
     }
     sqlContext = null
+  }
+
+  private def cleanupStagingDirInternal(stagingDirPath: Path, hadoopConf: Configuration): Unit = {
+    try {
+      val fs = stagingDirPath.getFileSystem(hadoopConf)
+      if (fs.delete(stagingDirPath, true)) {
+        LOGGER.info(s"Deleted staging directory $stagingDirPath")
+      }
+    } catch {
+      case ioe: IOException =>
+        LOGGER.warn("Failed to cleanup staging dir " + stagingDirPath, ioe)
+    }
   }
 
   protected def createSparkContext(): Unit = {
@@ -204,9 +244,11 @@ abstract class BaseSparkScalaInterpreter(val conf: SparkConf,
       case None =>
     }
 
+    initAndSendSparkWebUrl()
+
     val hiveSiteExisted: Boolean =
       Thread.currentThread().getContextClassLoader.getResource("hive-site.xml") != null
-    val hiveEnabled = conf.getBoolean("spark.useHiveContext", false)
+    val hiveEnabled = conf.getBoolean("zeppelin.spark.useHiveContext", false)
     if (hiveEnabled && hiveSiteExisted) {
       sqlContext = Class.forName("org.apache.spark.sql.hive.HiveContext")
         .getConstructor(classOf[SparkContext]).newInstance(sc).asInstanceOf[SQLContext]
@@ -240,7 +282,7 @@ abstract class BaseSparkScalaInterpreter(val conf: SparkConf,
     builder.getClass.getMethod("config", classOf[SparkConf]).invoke(builder, conf)
 
     if (conf.get("spark.sql.catalogImplementation", "in-memory").toLowerCase == "hive"
-      || conf.get("spark.useHiveContext", "false").toLowerCase == "true") {
+      || conf.get("zeppelin.spark.useHiveContext", "false").toLowerCase == "true") {
       val hiveSiteExisted: Boolean =
         Thread.currentThread().getContextClassLoader.getResource("hive-site.xml") != null
       val hiveClassesPresent =
@@ -274,6 +316,8 @@ abstract class BaseSparkScalaInterpreter(val conf: SparkConf,
       case None =>
     }
 
+    initAndSendSparkWebUrl()
+
     bind("spark", sparkSession.getClass.getCanonicalName, sparkSession, List("""@transient"""))
     bind("sc", "org.apache.spark.SparkContext", sc, List("""@transient"""))
     bind("sqlContext", "org.apache.spark.sql.SQLContext", sqlContext, List("""@transient"""))
@@ -287,6 +331,16 @@ abstract class BaseSparkScalaInterpreter(val conf: SparkConf,
     scalaInterpret("print(\"\")")
   }
 
+  private def initAndSendSparkWebUrl(): Unit = {
+    val webUiUrl = properties.getProperty("zeppelin.spark.uiWebUrl");
+    if (!StringUtils.isBlank(webUiUrl)) {
+      this.sparkUrl = webUiUrl.replace("{{applicationId}}", sc.applicationId);
+    } else {
+      useYarnProxyURLIfNeeded()
+    }
+    InterpreterContext.get.getIntpEventClient.sendWebUrlInfo(this.sparkUrl)
+  }
+
   protected def createZeppelinContext(): Unit = {
 
     var sparkShims: SparkShims = null
@@ -295,16 +349,31 @@ abstract class BaseSparkScalaInterpreter(val conf: SparkConf,
     } else {
       sparkShims = SparkShims.getInstance(sc.version, properties, sc)
     }
-    var webUiUrl = properties.getProperty("zeppelin.spark.uiWebUrl");
-    if (StringUtils.isBlank(webUiUrl)) {
-      webUiUrl = sparkUrl;
-    }
-    sparkShims.setupSparkListener(sc.master, webUiUrl, InterpreterContext.get)
+
+    sparkShims.setupSparkListener(sc.master, sparkUrl, InterpreterContext.get)
 
     z = new SparkZeppelinContext(sc, sparkShims,
       interpreterGroup.getInterpreterHookRegistry,
       properties.getProperty("zeppelin.spark.maxResult", "1000").toInt)
     bind("z", z.getClass.getCanonicalName, z, List("""@transient"""))
+  }
+
+  private def useYarnProxyURLIfNeeded() {
+    if (properties.getProperty("spark.webui.yarn.useProxy", "false").toBoolean) {
+      if (sparkMaster.startsWith("yarn")) {
+        val appId = sc.applicationId
+        val yarnClient = YarnClient.createYarnClient
+        val yarnConf = new YarnConfiguration()
+        // disable timeline service as we only query yarn app here.
+        // Otherwise we may hit this kind of ERROR:
+        // java.lang.ClassNotFoundException: com.sun.jersey.api.client.config.ClientConfig
+        yarnConf.set("yarn.timeline-service.enabled", "false")
+        yarnClient.init(yarnConf)
+        yarnClient.start()
+        val appReport = yarnClient.getApplicationReport(ConverterUtils.toApplicationId(appId))
+        this.sparkUrl = appReport.getTrackingUrl
+      }
+    }
   }
 
   private def isSparkSessionPresent(): Boolean = {

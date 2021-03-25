@@ -24,7 +24,7 @@ import org.apache.spark.sql.DataFrame
 import org.apache.zeppelin.annotation.ZeppelinApi
 import org.apache.zeppelin.display.AngularObjectWatcher
 import org.apache.zeppelin.display.ui.OptionInput.ParamOption
-import org.apache.zeppelin.interpreter.{BaseZeppelinContext, InterpreterContext, InterpreterHookRegistry}
+import org.apache.zeppelin.interpreter.{ZeppelinContext, InterpreterContext, InterpreterHookRegistry}
 
 import scala.collection.Seq
 import scala.collection.JavaConverters._
@@ -36,7 +36,7 @@ import scala.collection.JavaConverters._
 class SparkZeppelinContext(val sc: SparkContext,
                            val sparkShims: SparkShims,
                            val hooks2: InterpreterHookRegistry,
-                           val maxResult2: Int) extends BaseZeppelinContext(hooks2, maxResult2) {
+                           val maxResult2: Int) extends ZeppelinContext(hooks2, maxResult2) {
 
   private val interpreterClassMap = Map(
     "spark" -> "org.apache.zeppelin.spark.SparkInterpreter",
@@ -67,7 +67,7 @@ class SparkZeppelinContext(val sc: SparkContext,
 
   override def getInterpreterClassMap: util.Map[String, String] = interpreterClassMap.asJava
 
-  override def showData(obj: Any, maxResult: Int): String = sparkShims.showDataFrame(obj, maxResult)
+  override def showData(obj: Any, maxResult: Int): String = sparkShims.showDataFrame(obj, maxResult, interpreterContext)
 
   /**
    * create paragraph level of dynamic form of Select with no item selected.

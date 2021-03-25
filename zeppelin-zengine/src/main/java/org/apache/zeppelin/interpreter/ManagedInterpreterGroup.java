@@ -18,6 +18,7 @@
 
 package org.apache.zeppelin.interpreter;
 
+import org.apache.zeppelin.conf.ZeppelinConfiguration;
 import org.apache.zeppelin.interpreter.remote.RemoteInterpreterProcess;
 import org.apache.zeppelin.scheduler.Job;
 import org.apache.zeppelin.scheduler.Scheduler;
@@ -40,6 +41,7 @@ public class ManagedInterpreterGroup extends InterpreterGroup {
 
   private InterpreterSetting interpreterSetting;
   private RemoteInterpreterProcess remoteInterpreterProcess; // attached remote interpreter process
+  private Object interpreterProcessCreationLock = new Object();
 
   /**
    * Create InterpreterGroup with given id and interpreterSetting, used in ZeppelinServer
@@ -55,19 +57,21 @@ public class ManagedInterpreterGroup extends InterpreterGroup {
     return interpreterSetting;
   }
 
-  public synchronized RemoteInterpreterProcess getOrCreateInterpreterProcess(String userName,
-                                                                             Properties properties)
+  public RemoteInterpreterProcess getOrCreateInterpreterProcess(String userName,
+                                                                Properties properties)
       throws IOException {
-    if (remoteInterpreterProcess == null) {
-      LOGGER.info("Create InterpreterProcess for InterpreterGroup: " + getId());
-      remoteInterpreterProcess = interpreterSetting.createInterpreterProcess(id, userName,
-          properties);
-      remoteInterpreterProcess.start(userName);
-      interpreterSetting.getLifecycleManager().onInterpreterProcessStarted(this);
-      getInterpreterSetting().getRecoveryStorage()
-          .onInterpreterClientStart(remoteInterpreterProcess);
+    synchronized (interpreterProcessCreationLock) {
+      if (remoteInterpreterProcess == null) {
+        LOGGER.info("Create InterpreterProcess for InterpreterGroup: {}", getId());
+        remoteInterpreterProcess = interpreterSetting.createInterpreterProcess(id, userName,
+                properties);
+        remoteInterpreterProcess.start(userName);
+        remoteInterpreterProcess.init(ZeppelinConfiguration.create());
+        getInterpreterSetting().getRecoveryStorage()
+                .onInterpreterClientStart(remoteInterpreterProcess);
+      }
+      return remoteInterpreterProcess;
     }
-    return remoteInterpreterProcess;
   }
 
   public RemoteInterpreterProcess getInterpreterProcess() {
@@ -82,8 +86,9 @@ public class ManagedInterpreterGroup extends InterpreterGroup {
   /**
    * Close all interpreter instances in this group
    */
+  @Override
   public void close() {
-    LOGGER.info("Close InterpreterGroup: " + id);
+    LOGGER.info("Close InterpreterGroup: {}", id);
     for (String sessionId : sessions.keySet()) {
       close(sessionId);
     }
@@ -94,8 +99,7 @@ public class ManagedInterpreterGroup extends InterpreterGroup {
    * @param sessionId
    */
   public synchronized void close(String sessionId) {
-    LOGGER.info("Close Session: " + sessionId + " for interpreter setting: " +
-            interpreterSetting.getName());
+    LOGGER.info("Close Session: {} for interpreter setting: {}", sessionId, interpreterSetting.getName());
     close(sessions.remove(sessionId));
     //TODO(zjffdu) whether close InterpreterGroup if there's no session left in Zeppelin Server
     if (sessions.isEmpty() && interpreterSetting != null) {
@@ -141,17 +145,24 @@ public class ManagedInterpreterGroup extends InterpreterGroup {
   private void closeInterpreter(Interpreter interpreter) {
     Scheduler scheduler = interpreter.getScheduler();
 
-    for (final Job job : scheduler.getAllJobs()) {
-      job.abort();
-      job.setStatus(Job.Status.ABORT);
-      LOGGER.info("Job " + job.getJobName() + " aborted ");
+    if (Boolean.parseBoolean(
+            interpreter.getProperty("zeppelin.interpreter.close.cancel_job", "true"))) {
+      for (final Job job : scheduler.getAllJobs()) {
+        if (!job.isTerminated()) {
+          job.abort();
+          job.setStatus(Job.Status.ABORT);
+          LOGGER.info("Job {} aborted ", job.getJobName());
+        }
+      }
+    } else {
+      LOGGER.info("Keep job running while closing interpreter: {}", interpreter.getClassName());
     }
 
     try {
-      LOGGER.info("Trying to close interpreter " + interpreter.getClassName());
+      LOGGER.info("Trying to close interpreter {}", interpreter.getClassName());
       interpreter.close();
     } catch (InterpreterException e) {
-      LOGGER.warn("Fail to close interpreter " + interpreter.getClassName(), e);
+      LOGGER.warn("Fail to close interpreter {}", interpreter.getClassName(), e);
     }
 
     //TODO(zjffdu) move the close of schedule to Interpreter
@@ -172,4 +183,7 @@ public class ManagedInterpreterGroup extends InterpreterGroup {
     }
   }
 
+  public boolean isEmpty() {
+    return this.sessions.isEmpty();
+  }
 }
